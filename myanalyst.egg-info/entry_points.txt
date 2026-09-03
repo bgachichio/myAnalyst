@@ -1,0 +1,2 @@
+[console_scripts]
+myanalyst-collect = collector.run:main

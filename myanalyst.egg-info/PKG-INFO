@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: myanalyst
+Version: 0.1.0
+Summary: NSE equity valuation kernel and end-of-day price collector
+Requires-Python: >=3.11
+License-File: LICENCE-NOTES.md
+Requires-Dist: duckdb>=1.1
+Requires-Dist: httpx>=0.27
+Requires-Dist: openpyxl>=3.1
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Dynamic: license-file

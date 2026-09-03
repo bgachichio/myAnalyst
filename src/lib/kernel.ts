@@ -8,6 +8,48 @@
 
 export type SectorProfile = "industrial" | "insurer" | "bank" | "property" | "telco";
 
+/** How the price was arrived at. Printed on every memo. */
+export type Origin =
+  | "nse-feed"          // collected automatically, dated by the exchange
+  | "manual"            // typed in, usually because the feed failed
+  | "private-deal"      // an offer or a round price, not a market price
+  | "foreign-listed"    // quoted on another exchange
+  | "foreign-private";  // unquoted, outside Kenya
+
+const MARKET_PRICES: ReadonlySet<Origin> = new Set(["nse-feed", "manual", "foreign-listed"]);
+
+export const KES = "KES";
+export const KNOWN_CURRENCIES: ReadonlySet<string> = new Set([
+  "KES", "USD", "ZAR", "GBP", "EUR", "TZS", "UGX", "RWF", "NGN",
+]);
+
+export interface PriceInput {
+  amount: number;
+  currency?: string;
+  origin?: Origin;
+  asOf?: string;   // ISO date
+  note?: string;
+}
+
+function coercePrice(price: PriceInput | number): Required<Pick<PriceInput, "amount" | "currency" | "origin">> & PriceInput {
+  const p = typeof price === "number" ? { amount: price } : price;
+  const resolved = { currency: KES, origin: "nse-feed" as Origin, ...p };
+  if (!(resolved.amount > 0)) throw new RangeError("price must be positive");
+  if (!KNOWN_CURRENCIES.has(resolved.currency)) {
+    throw new RangeError(`${resolved.currency} is not a currency this tool knows; add it deliberately`);
+  }
+  if (resolved.origin === "private-deal" && !resolved.note) {
+    throw new RangeError("a private-deal price must say what it is: an offer, a round, a valuation");
+  }
+  return resolved;
+}
+
+function isStale(asOf?: string): boolean {
+  if (!asOf) return false;
+  const days = (Date.now() - Date.parse(asOf)) / 86_400_000;
+  return days > 4;
+}
+
 export const BUY = "BUY";
 export const WALK = "SMILE AND WALK AWAY";
 
@@ -25,6 +67,8 @@ export interface Parameters {
   stress: number;
   rTenorYears?: number;
   rAuctionDate?: string;
+  /** The currency the discount rate belongs to. A shilling rate prices shilling cash flows. */
+  currency?: string;
 }
 
 export interface Inputs {
@@ -60,6 +104,8 @@ export const pvLump = (rate: number, nper: number, futureValue: number): number 
 
 export interface Valuation {
   entryPrice: number;
+  provenance: string;
+  warnings: string[];
   myFutureEps: number;
   myValuation: number;
   pvDividendsPs: number;
@@ -76,12 +122,32 @@ export interface Valuation {
   netDividendPs: number;
 }
 
-export function value(inputs: Inputs, price: number, p: Parameters): Valuation {
+export function value(inputs: Inputs, price: PriceInput | number, p: Parameters): Valuation {
   checkParameters(p);
-  if (price <= 0) throw new RangeError("price must be positive");
   if (inputs.shares_issued <= 0) throw new RangeError("shares issued must be positive");
 
-  const entryPrice = price * (1 + p.c);
+  const quote = coercePrice(price);
+  const rateCurrency = p.currency ?? KES;
+  const warnings: string[] = [];
+
+  if (quote.currency !== rateCurrency) {
+    warnings.push(
+      `price is in ${quote.currency} but the discount rate is a ${rateCurrency} rate; ` +
+      "use a rate matching the currency of the cash flows, or state the deviation",
+    );
+  }
+  if (!MARKET_PRICES.has(quote.origin)) {
+    warnings.push(
+      `${quote.origin}: this is not a market price, so the margin of safety is doing more work than usual`,
+    );
+  }
+  if (quote.origin === "manual") warnings.push("price was entered by hand, not collected");
+  if (isStale(quote.asOf)) warnings.push(`price is dated ${quote.asOf} and may be stale`);
+  if (quote.currency !== KES && p.c) {
+    warnings.push("NSE transaction costs are being applied to a non-KES price; check they apply");
+  }
+
+  const entryPrice = quote.amount * (1 + p.c);
   const shares = inputs.shares_issued;
 
   const pvEarnings = pvLump(p.r, p.n, fvAnnuity(p.g, p.n, inputs.net_profit_from_operations));
@@ -98,8 +164,14 @@ export function value(inputs: Inputs, price: number, p: Parameters): Valuation {
     (inputs.non_current_assets - inputs.non_current_liabilities);
   const navPs = netCapital / shares;
 
+  const provenance =
+    `${quote.amount.toLocaleString("en-GB", { minimumFractionDigits: 2 })} ${quote.currency}, ${quote.origin}` +
+    (quote.asOf ? ` as at ${quote.asOf}` : "") + (quote.note ? ` - ${quote.note}` : "");
+
   return {
     entryPrice,
+    provenance,
+    warnings,
     myFutureEps,
     myValuation,
     pvDividendsPs,

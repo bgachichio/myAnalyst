@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 
 from .params import Parameters
+from .price import KES, Origin, PriceInput
 
 BUY = "BUY"
 WALK = "SMILE AND WALK AWAY"
@@ -45,6 +46,7 @@ class Inputs:
 
 @dataclass(frozen=True)
 class Valuation:
+    price: PriceInput
     entry_price: float
     my_future_eps: float
     my_valuation: float
@@ -60,22 +62,45 @@ class Valuation:
     cigar_butt: bool
     my_nav_value_ps: float
     net_dividend_ps: float
+    provenance: str
+    warnings: tuple[str, ...]
 
     def as_dict(self) -> dict:
         return asdict(self)
 
 
-def value(inputs: Inputs, price: float, p: Parameters) -> Valuation:
+def value(inputs: Inputs, price: PriceInput | float, p: Parameters) -> Valuation:
     """Return the full decision set for one company at one price.
 
-    `price` is the screen price. The transaction cost is applied here and only
-    here, on entry, so the reproduction fixtures can run at c = 0 and still
-    exercise the same code path as production.
-    """
-    if price <= 0:
-        raise ValueError("price must be positive")
+    `price` may be a bare number, taken as a KES market price, or a PriceInput
+    carrying its currency, its origin and its date. The transaction cost is
+    applied here and only here, on entry, so the reproduction fixtures can run
+    at c = 0 and still exercise the same code path as production.
 
-    entry = price * (1.0 + p.c)
+    Nothing here refuses a price for being hand-typed or private. It records
+    what the price is and warns where the reader should look twice.
+    """
+    quote = PriceInput.coerce(price)
+    warnings: list[str] = []
+
+    if quote.currency != p.currency:
+        warnings.append(
+            f"price is in {quote.currency} but the discount rate is a {p.currency} rate; "
+            "use a rate matching the currency of the cash flows, or state the deviation"
+        )
+    if not quote.origin.is_a_market_price:
+        warnings.append(
+            f"{quote.origin.value}: this is not a market price, so the margin of safety "
+            "is doing more work than usual"
+        )
+    if quote.origin is Origin.MANUAL:
+        warnings.append("price was entered by hand, not collected")
+    if quote.is_stale:
+        warnings.append(f"price is dated {quote.as_of.isoformat()} and may be stale")
+    if quote.currency != KES and p.c:
+        warnings.append("NSE transaction costs are being applied to a non-KES price; check they apply")
+
+    entry = quote.amount * (1.0 + p.c)
     shares = inputs.shares_issued
 
     pv_earnings = pv_lump(p.r, p.n, fv_annuity(p.g, p.n, inputs.net_profit_from_operations))
@@ -93,6 +118,7 @@ def value(inputs: Inputs, price: float, p: Parameters) -> Valuation:
     nav_ps = net_capital / shares
 
     return Valuation(
+        price=quote,
         entry_price=entry,
         my_future_eps=my_future_eps,
         my_valuation=my_valuation,
@@ -108,4 +134,6 @@ def value(inputs: Inputs, price: float, p: Parameters) -> Valuation:
         cigar_butt=nav_ps >= entry,
         my_nav_value_ps=(1.0 - p.k) * nav_ps,
         net_dividend_ps=inputs.dividend_per_share_proposed * (1.0 - p.w),
+        provenance=quote.provenance(),
+        warnings=tuple(warnings),
     )

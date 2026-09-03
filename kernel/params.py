@@ -34,6 +34,11 @@ class Parameters:
     stress: float = 0.10
     r_tenor_years: int | None = None   # the tenor the rate actually came from
     r_auction_date: str | None = None  # and the auction that set it
+    #: The currency the discount rate belongs to. A shilling rate prices
+    #: shilling cash flows; discounting a dollar company at the GoK yield
+    #: double-counts Kenyan risk and is the same error as comparing raw
+    #: multiples across exchanges.
+    currency: str = "KES"
 
     def __post_init__(self) -> None:
         if self.r <= 0:

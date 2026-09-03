@@ -71,6 +71,38 @@ def collect(store: PriceStore, trade_date: dt.date, *, window: int, out_dir: Pat
     return 0
 
 
+def health(store: PriceStore, *, stale_after: int = 4) -> int:
+    """Say plainly whether the collector is doing its job. Exit 0 only if it is.
+
+    Success is not "the process ran". It is "a good day of prices landed
+    recently", which is the only thing the app actually depends on.
+    """
+    last = store.db.execute(
+        "SELECT max(trade_date) FROM daily_prices"
+    ).fetchone()[0]
+    counters = store.db.execute("SELECT count(DISTINCT ticker) FROM daily_prices").fetchone()[0]
+    rates = store.db.execute("SELECT count(*) FROM series_observations").fetchone()[0]
+    failures = store.db.execute(
+        "SELECT count(*) FROM collection_log WHERE outcome NOT IN ('ok', 'skipped') "
+        "AND run_at > now() - INTERVAL 7 DAY"
+    ).fetchone()[0]
+
+    if last is None:
+        log.error("HEALTH FAIL: the store holds no prices at all")
+        return 1
+
+    age = (dt.date.today() - last).days
+    log.info(
+        "last close %s (%d days old) · %d counters · %d rate observations · %d failures in 7 days",
+        last, age, counters, rates, failures,
+    )
+    if age > stale_after:
+        log.error("HEALTH FAIL: newest close is %d days old, over the %d-day limit", age, stale_after)
+        return 1
+    log.info("HEALTH OK")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Collect NSE end-of-day prices.")
     ap.add_argument("--db", default="/var/lib/myanalyst/prices.duckdb")
@@ -78,12 +110,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--window", type=int, default=DAILY_WINDOW_DAYS, help="trading days of daily history kept")
     ap.add_argument("--date", default=None, help="trade date, YYYY-MM-DD; defaults to today")
     ap.add_argument("--prune-only", action="store_true", help="run the clean-up without fetching")
+    ap.add_argument("--health", action="store_true", help="report state and exit non-zero if stale")
+    ap.add_argument("--stale-after", type=int, default=4,
+                    help="days without a successful collection before health fails")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     trade_date = dt.date.fromisoformat(args.date) if args.date else dt.date.today()
 
     with PriceStore(args.db) as store:
+        if args.health:
+            return health(store, stale_after=args.stale_after)
         if args.prune_only:
             log.info("%s", store.prune(window_days=args.window).line())
             return 0

@@ -4,6 +4,9 @@ on: [push, pull_request]
 permissions:
   contents: read
 
+env:
+  GITLEAKS_VERSION: "8.21.2"
+
 jobs:
   kernel:
     runs-on: ubuntu-24.04
@@ -14,7 +17,7 @@ jobs:
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with: { python-version: "3.12" }
       - run: pip install -e ".[dev]"
-      - name: Python kernel and store
+      - name: Python kernel, store and adapters
         run: python -m pytest -q
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af  # v4.1.0
@@ -23,6 +26,31 @@ jobs:
       - name: TypeScript kernel against the same fixtures
         run: npm test
 
-      - name: No secrets in the history
-        uses: gitleaks/gitleaks-action@83373cf2f8c4db6e24b41c1a9b086bb9619e9cd3  # v2.3.7
-        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      # The gitleaks action scans the commit range of the push event. On the
+      # first commit that range starts at a parent which does not exist: git
+      # fails, nothing is scanned, and it still reports "no leaks found". A scan
+      # that scans nothing and passes is worse than no scan, so this runs the
+      # binary directly over the whole history and the whole tree, and proves it
+      # actually looked at something.
+      - name: Secret scan, whole history and whole tree
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL --retry 3 -o "$tarball" "$base/$tarball"
+          curl -fsSL --retry 3 -o checksums.txt "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep " $tarball\$" checksums.txt | sha256sum -c -
+          tar xzf "$tarball" gitleaks
+
+          commits=$(git rev-list --count HEAD)
+          echo "history carries $commits commits"
+          test "$commits" -gt 0
+
+          ./gitleaks git . --redact --no-banner --exit-code 1
+          ./gitleaks dir . --redact --no-banner --exit-code 1 \
+            --ignore-path .gitignore
+
+      - name: Dependency audit
+        run: |
+          pip install pip-audit==2.7.3
+          pip-audit --progress-spinner off --strict

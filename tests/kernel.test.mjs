@@ -62,3 +62,34 @@ test("parameters refuse nonsense", () => {
     assert.throws(() => value(c.inputs, c.price, { ...fixtures.params, ...bad }), RangeError);
   }
 });
+
+test("a hand-typed price reaches the same verdict and says so", () => {
+  const c = fixtures.cases[0];
+  const fed = value(c.inputs, c.price, fixtures.params);
+  const typed = value(c.inputs, { amount: c.price, origin: "manual" }, fixtures.params);
+  assert.equal(typed.decision, fed.decision);
+  assert.equal(typed.myValuation, fed.myValuation);
+  assert.ok(typed.warnings.some((w) => w.includes("entered by hand")));
+  assert.equal(fed.warnings.length, 0);
+});
+
+test("a foreign price against a shilling rate is flagged", () => {
+  const c = fixtures.cases[0];
+  const v = value(c.inputs, { amount: c.price, currency: "USD", origin: "foreign-listed" }, fixtures.params);
+  assert.ok(v.warnings.some((w) => w.includes("discount rate is a KES rate")));
+});
+
+test("a private-deal price must say what it is", () => {
+  const c = fixtures.cases[0];
+  assert.throws(
+    () => value(c.inputs, { amount: c.price, origin: "private-deal" }, fixtures.params),
+    RangeError,
+  );
+  const named = value(c.inputs, { amount: c.price, origin: "private-deal", note: "Series A" }, fixtures.params);
+  assert.ok(named.warnings.some((w) => w.includes("not a market price")));
+});
+
+test("an unknown currency is refused", () => {
+  const c = fixtures.cases[0];
+  assert.throws(() => value(c.inputs, { amount: c.price, currency: "XYZ" }, fixtures.params), RangeError);
+});
