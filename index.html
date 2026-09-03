@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#237352" />
+    <meta name="description" content="NSE equity valuation, on the model that produced the 2016 UNGA and Liberty verdicts." />
+    <title>myAnalyst</title>
+
+    <!-- design.md §12.1. Runs before any stylesheet so the wrong theme never paints. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('ui.theme') || 'system';
+          var dark = t === 'dark' || (t === 'system' &&
+            matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.toggle('dark', dark);
+          var f = localStorage.getItem('ui.fontScale') || 'default';
+          document.documentElement.dataset.fontScale = f;
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

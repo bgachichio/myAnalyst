@@ -7,8 +7,9 @@ and the CBK key rates, stores them, prunes old rows, and writes the JSON the app
 reads. **If it stops, every valuation falls back to a hand-typed price.** The
 tool still works; it just stops knowing today's number by itself.
 
-The PWA is not deployed by this document. When milestone 3 lands it goes to
-Vercel by `building` §8.2 Path A, and this document gains a second half.
+The PWA is the shell you open: it holds the valuation kernel and runs entirely
+in the browser, offline. It is deployed separately, to Vercel, because it is
+static and public. The collector's data never goes there.
 
 ## 2. PREREQUISITES
 
@@ -78,6 +79,8 @@ run**: it is the only proof the parsers match the live pages.
 
 ## 5. BUILD
 
+**The collector:**
+
 ```sh
 python -m build --wheel        # ~5 seconds, one file in dist/, under 60 KB
 ```
@@ -85,7 +88,29 @@ python -m build --wheel        # ~5 seconds, one file in dist/, under 60 KB
 The artefact is a pure-Python wheel. Its dependencies (`duckdb`, `httpx`,
 `openpyxl`) install from manylinux wheels, so nothing compiles on the VM.
 
+**The PWA:**
+
+```sh
+npm ci && npm run build        # ~6 seconds
+```
+
+Type-checks first, then builds. Expect `dist/` at roughly 790 KB precached: a
+164 KB shell (53 KB gzipped) plus a 374 KB chart chunk that loads only on the
+Analyse screen. Fonts are self-hosted; nothing is fetched from a CDN at runtime.
+
 ## 6. DEPLOY
+
+**The PWA — Vercel, `building` §8.2 Path A:**
+
+```sh
+npm ci && npm run build && npm run preview   # check http://localhost:4173 first
+npx vercel                                   # preview URL, open it
+npx vercel --prod                            # promote
+```
+
+Build on the Lenovo. Never on the VM.
+
+**The collector — the VM:**
 
 ```sh
 ./deploy.sh                    # under 90 seconds
@@ -149,6 +174,18 @@ Prove all of it on the box:
 
 ## 7. VERIFY
 
+**The PWA:**
+
+```sh
+curl -fsS -o /dev/null -w "%{http_code}\n" https://<app>.vercel.app   # expect 200
+```
+
+Then open it on the handset: install it, turn on aeroplane mode, and confirm it
+still opens and still reaches a verdict. An installable app that needs the
+network is not offline-capable.
+
+**The collector:**
+
 ```sh
 ssh pulse '/opt/myanalyst/current/.venv/bin/myanalyst-collect --health --db /var/lib/myanalyst/prices.duckdb'
 ```
@@ -170,6 +207,10 @@ ssh pulse 'journalctl -u myanalyst-collect -n 50 --no-pager'
 ```
 
 ## 8. ROLLBACK
+
+**The PWA:** `npx vercel rollback` — instant, no rebuild, previous deployment.
+
+**The collector:**
 
 ```sh
 ./rollback.sh
