@@ -12,9 +12,17 @@ the fragility sheet with its ±10% stress. Two sector profiles are wired, becaus
 a miller has working capital and an insurer does not; the Focus Model ratio is
 suppressed where it would be a number that lies.
 
-The collector fetches the NSE daily price list after the close, stores it, keeps
-400 trading days of daily closes per counter plus month-ends for ever, prunes on
-every run, and emits the JSON the app reads.
+The collector holds eleven registered series: the GoK benchmark yield that sets
+the discount rate, the Central Bank Rate, Kenya inflation and real GDP growth,
+NSE closes, NASI, the NSE 25 and the banking sector index, and the Bitcoin
+hurdle. Two more are registered and deliberately not collected. `collector/registry.py`
+is the contract: every series names the decision it changes, its cadence, its
+retention, and whether its licence has actually been checked.
+
+Retention is tiered and registry-driven: 400 trading days of full resolution for
+anything daily, month-end closes archived for ever, and slow series such as
+annual GDP kept entire. Twenty years of all of it comes to about 2 MB, so
+storage is not the binding constraint and the code says so in a test.
 
 Nothing here computes a verdict with a language model. Every figure is
 reproducible from its inputs and the parameters printed beside it.

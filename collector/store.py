@@ -18,6 +18,8 @@ from pathlib import Path
 
 import duckdb
 
+from .registry import BY_ID, Cadence, Series
+
 #: Trading days of full daily history kept per counter. About eighteen months,
 #: which covers a 52-week range and a one-year return with headroom to spare.
 DAILY_WINDOW_DAYS = 400
@@ -43,6 +45,15 @@ CREATE TABLE IF NOT EXISTS monthly_prices (
     close       DOUBLE  NOT NULL,
     source      VARCHAR NOT NULL,
     PRIMARY KEY (ticker, month_end)
+);
+CREATE TABLE IF NOT EXISTS series_observations (
+    series_id   VARCHAR NOT NULL,
+    obs_date    DATE    NOT NULL,
+    value       DOUBLE  NOT NULL,
+    note        VARCHAR,
+    source      VARCHAR NOT NULL,
+    fetched_at  TIMESTAMP NOT NULL,
+    PRIMARY KEY (series_id, obs_date)
 );
 CREATE TABLE IF NOT EXISTS collection_log (
     run_at      TIMESTAMP NOT NULL,
@@ -72,17 +83,36 @@ class Quote:
 
 
 @dataclass(frozen=True)
+class Observation:
+    """One value of one registered series: an index level, a yield, a growth rate."""
+
+    series_id: str
+    obs_date: dt.date
+    value: float
+    note: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.series_id not in BY_ID:
+            raise ValueError(f"{self.series_id!r} is not in the registry; register it before collecting it")
+        if not BY_ID[self.series_id].collectable:
+            raise ValueError(f"{self.series_id!r} is registered as restricted and must not be collected")
+        if self.obs_date > dt.date.today():
+            raise ValueError(f"{self.series_id}: observation is dated in the future")
+
+
+@dataclass(frozen=True)
 class PruneReport:
     daily_rows_before: int
     daily_rows_after: int
     daily_rows_deleted: int
     monthly_rows: int
+    series_rows_deleted: int
     bytes_on_disk: int
 
     def line(self) -> str:
         return (
-            f"prune: {self.daily_rows_deleted} daily rows removed, "
-            f"{self.daily_rows_after} kept, {self.monthly_rows} month-ends archived, "
+            f"prune: {self.daily_rows_deleted} price rows and {self.series_rows_deleted} series rows removed, "
+            f"{self.daily_rows_after} closes kept, {self.monthly_rows} month-ends archived, "
             f"{self.bytes_on_disk / 1024:.0f} KB on disk"
         )
 
@@ -119,6 +149,22 @@ class PriceStore:
         self.db.executemany(
             "INSERT OR REPLACE INTO daily_prices "
             "(ticker, trade_date, close, volume, source, fetched_at) VALUES (?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        return len(rows)
+
+    def record(self, observations: list[Observation], fetched_at: dt.datetime | None = None) -> int:
+        """Insert or replace observations of registered series."""
+        if not observations:
+            return 0
+        stamp = fetched_at or dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+        rows = [
+            (o.series_id, o.obs_date, o.value, o.note, BY_ID[o.series_id].source, stamp)
+            for o in observations
+        ]
+        self.db.executemany(
+            "INSERT OR REPLACE INTO series_observations "
+            "(series_id, obs_date, value, note, source, fetched_at) VALUES (?, ?, ?, ?, ?, ?)",
             rows,
         )
         return len(rows)
@@ -171,6 +217,26 @@ class PriceStore:
             [window_days],
         )
 
+        # Each registered series prunes to its own window. A series declaring
+        # retention_days = None arrives a few times a year and is kept entire.
+        series_before = self.db.execute("SELECT count(*) FROM series_observations").fetchone()[0]
+        for series in BY_ID.values():
+            if series.retention_days is None:
+                continue
+            self.db.execute(
+                """
+                DELETE FROM series_observations WHERE (series_id, obs_date) IN (
+                    SELECT series_id, obs_date FROM (
+                        SELECT series_id, obs_date,
+                               row_number() OVER (PARTITION BY series_id ORDER BY obs_date DESC) AS rn
+                        FROM series_observations WHERE series_id = ?
+                    ) WHERE rn > ?
+                )
+                """,
+                [series.series_id, series.retention_days],
+            )
+        series_after = self.db.execute("SELECT count(*) FROM series_observations").fetchone()[0]
+
         after = self.db.execute("SELECT count(*) FROM daily_prices").fetchone()[0]
         monthly = self.db.execute("SELECT count(*) FROM monthly_prices").fetchone()[0]
         self.db.execute("CHECKPOINT")
@@ -180,6 +246,7 @@ class PriceStore:
             daily_rows_after=after,
             daily_rows_deleted=before - after,
             monthly_rows=monthly,
+            series_rows_deleted=series_before - series_after,
             bytes_on_disk=self.path.stat().st_size if self.path.exists() else 0,
         )
 
@@ -214,6 +281,15 @@ class PriceStore:
         ).fetchall()
         return [{"date": d.isoformat(), "close": c} for d, c in rows]
 
+    def observations(self) -> dict[str, list[dict]]:
+        """Every registered series the store holds, oldest first."""
+        out: dict[str, list[dict]] = {}
+        for sid, d, v in self.db.execute(
+            "SELECT series_id, obs_date, value FROM series_observations ORDER BY series_id, obs_date"
+        ).fetchall():
+            out.setdefault(sid, []).append({"date": d.isoformat(), "value": v})
+        return out
+
     def emit(self, out_dir: str | Path) -> Path:
         """Write the compact JSON the app reads. One index, one file per counter."""
         out = Path(out_dir)
@@ -224,7 +300,14 @@ class PriceStore:
             "window_days": DAILY_WINDOW_DAYS,
             "counters": latest,
         }
+        index["series"] = {
+            sid: BY_ID[sid].label
+            for (sid,) in self.db.execute(
+                "SELECT DISTINCT series_id FROM series_observations ORDER BY series_id"
+            ).fetchall()
+        }
         (out / "latest.json").write_text(json.dumps(index, indent=1))
+        (out / "series-observations.json").write_text(json.dumps(self.observations()))
         for row in latest:
             (out / "series" / f"{row['ticker']}.json").write_text(json.dumps(self.series(row["ticker"])))
         return out / "latest.json"
