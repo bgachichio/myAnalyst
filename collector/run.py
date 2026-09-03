@@ -12,6 +12,7 @@ import logging
 import sys
 from pathlib import Path
 
+from .cbk import fetch_rates
 from .nse import ParseFailed, SourceRefused, fetch_latest
 from .store import DAILY_WINDOW_DAYS, PriceStore
 
@@ -47,6 +48,19 @@ def collect(store: PriceStore, trade_date: dt.date, *, window: int, out_dir: Pat
     written = store.upsert(quotes)
     store.log(trade_date, written, "ok")
     log.info("stored %d closes for %s", written, trade_date)
+
+    # The key rates are a separate source with a separate failure mode. A CBK
+    # outage must not discard a good day of prices, so it is caught on its own.
+    try:
+        rates = fetch_rates(trade_date)
+        store.record(rates)
+        log.info("stored %d key rates: %s", len(rates), ", ".join(r.series_id for r in rates))
+    except (ParseFailed, SourceRefused) as exc:
+        log.error("key rates unavailable, prices kept: %s", exc)
+        store.log(trade_date, 0, "rates-failed", str(exc))
+    except Exception as exc:
+        log.exception("key rates failed")
+        store.log(trade_date, 0, "rates-error", f"{type(exc).__name__}: {exc}")
 
     report = store.prune(window_days=window)
     log.info("%s", report.line())

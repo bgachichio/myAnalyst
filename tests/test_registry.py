@@ -26,15 +26,38 @@ def test_the_discount_rate_and_the_hurdle_are_both_registered():
     assert "btc.usd" in BY_ID
 
 
-def test_restricted_series_are_registered_but_never_collectable():
-    restricted = [s for s in REGISTRY if s.licence is Licence.RESTRICTED]
-    assert restricted, "the ones we decided not to hold must stay written down"
-    assert all(s not in collectable() for s in restricted)
+def test_nse_data_is_marked_private_use_only():
+    """The NSE page asserts its data is proprietary and may not be copied.
+
+    So NSE series may be held on Brian's own machine and must never be emitted
+    to a path anything else can read. This is the rule that keeps a convenience
+    cache from becoming redistribution.
+    """
+    nse = [s for s in REGISTRY if s.series_id.startswith("nse.")]
+    assert nse
+    for s in nse:
+        assert s.licence is Licence.PROPRIETARY_PRIVATE_USE
+        assert not s.publishable
+
+
+def test_public_sources_stay_publishable():
+    for series_id in ("cbk.cbr", "ke.gdp.growth", "fx.usdkes"):
+        assert BY_ID[series_id].publishable
 
 
 def test_a_restricted_series_cannot_be_recorded():
-    with pytest.raises(ValueError, match="restricted"):
-        Observation("us.djia", dt.date(2026, 9, 2), 41000.0)
+    """No series is restricted today; the guard must still hold if one is added."""
+    from dataclasses import replace
+
+    from collector import store as store_module
+
+    guarded = replace(BY_ID["nse.nasi"], series_id="test.restricted", licence=Licence.RESTRICTED)
+    store_module.BY_ID["test.restricted"] = guarded
+    try:
+        with pytest.raises(ValueError, match="restricted"):
+            Observation("test.restricted", dt.date(2026, 9, 2), 1.0)
+    finally:
+        del store_module.BY_ID["test.restricted"]
 
 
 def test_an_unregistered_series_cannot_be_recorded():

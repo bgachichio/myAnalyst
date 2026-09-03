@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +36,8 @@ CREATE TABLE IF NOT EXISTS daily_prices (
     trade_date  DATE    NOT NULL,
     close       DOUBLE  NOT NULL,
     volume      BIGINT,
+    isin        VARCHAR,
+    sector      VARCHAR,
     source      VARCHAR NOT NULL,
     fetched_at  TIMESTAMP NOT NULL,
     PRIMARY KEY (ticker, trade_date)
@@ -72,10 +75,18 @@ class Quote:
     close: float
     volume: int | None
     source: str
+    #: The stable identifier. Company names change and short codes are reused;
+    #: an ISIN is issued once. Kept alongside the ticker, never instead of it.
+    isin: str | None = None
+    #: The NSE groups its price list by sector, and the sector decides which
+    #: fragility sheet the kernel runs. Carried from the source, not guessed.
+    sector: str | None = None
 
     def __post_init__(self) -> None:
         if not self.ticker or len(self.ticker) > 12:
             raise ValueError(f"implausible ticker: {self.ticker!r}")
+        if self.isin is not None and not re.fullmatch(r"[A-Z]{2}[A-Z0-9]{9}\d", self.isin):
+            raise ValueError(f"{self.ticker}: {self.isin!r} is not a well-formed ISIN")
         if self.close <= 0:
             raise ValueError(f"{self.ticker}: close must be positive, got {self.close}")
         if self.trade_date > dt.date.today():
@@ -145,10 +156,14 @@ class PriceStore:
                 "the parser is probably reading the wrong table"
             )
         stamp = fetched_at or dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
-        rows = [(q.ticker, q.trade_date, q.close, q.volume, q.source, stamp) for q in quotes]
+        rows = [
+            (q.ticker, q.trade_date, q.close, q.volume, q.isin, q.sector, q.source, stamp)
+            for q in quotes
+        ]
         self.db.executemany(
             "INSERT OR REPLACE INTO daily_prices "
-            "(ticker, trade_date, close, volume, source, fetched_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "(ticker, trade_date, close, volume, isin, sector, source, fetched_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         return len(rows)
@@ -290,9 +305,22 @@ class PriceStore:
             out.setdefault(sid, []).append({"date": d.isoformat(), "value": v})
         return out
 
-    def emit(self, out_dir: str | Path) -> Path:
-        """Write the compact JSON the app reads. One index, one file per counter."""
+    def emit(self, out_dir: str | Path, *, private: bool = True) -> Path:
+        """Write the compact JSON the app reads. One index, one file per counter.
+
+        `private` must stay true for any path that is not solely Brian's own
+        device. The NSE asserts its data is proprietary and may not be copied,
+        so its series are written only under a private emit and are withheld
+        from a public one. Refusing here is cheaper than a takedown.
+        """
         out = Path(out_dir)
+        if not private:
+            withheld = [s.series_id for s in BY_ID.values() if not s.publishable]
+            if withheld:
+                raise PermissionError(
+                    "refusing a public emit: " + ", ".join(sorted(withheld))
+                    + " are held for private use only (see LICENCE-NOTES.md)"
+                )
         (out / "series").mkdir(parents=True, exist_ok=True)
         latest = self.latest()
         index = {

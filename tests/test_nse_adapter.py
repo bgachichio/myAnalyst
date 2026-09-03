@@ -97,3 +97,63 @@ def test_parsing_works_against_a_real_workbook():
     quotes = parse_workbook(sample.read_bytes(), DAY)
     assert len(quotes) >= 20
     assert all(q.close > 0 for q in quotes)
+
+
+# --- what the real page actually looks like -------------------------------
+# Structure taken from the live page on 2 September 2026: a sector dropdown,
+# "Statistics as of 02-Sep-2026", a "Download Daily Equity Price List" link,
+# and a table keyed by Company and ISIN Code rather than by short code.
+
+REAL_SHAPE = """
+  <div class="tabs">Market Statistics Summary | Equity Statistics | Bonds Statistics</div>
+  <select><option>AGRICULTURAL</option><option>BANKING</option></select>
+  <p>Statistics as of 02-Sep-2026</p>
+  <a href="/wp-content/uploads/Daily-Equity-Price-List-02-09-2026.xlsx">Download Daily Equity Price List</a>
+  <a href="/wp-content/uploads/equity-statistics-archive.xlsx">Equity Statistics Archive</a>
+  <a href="/wp-content/uploads/bond-statistics.xlsx">Bond Statistics</a>
+  <table><tr><th>Company</th><th>ISIN Code</th><th>Volume</th></tr></table>
+"""
+
+
+def test_reads_the_trade_date_the_page_states():
+    from collector.nse import as_of_date
+    assert as_of_date(REAL_SHAPE) == dt.date(2026, 9, 2)
+
+
+def test_prefers_the_official_download_over_other_spreadsheets():
+    files = discover_price_files(REAL_SHAPE)
+    labels = [f.label for f in files]
+    assert "Download Daily Equity Price List" in labels
+    assert "Equity Statistics Archive" in labels, "a competing spreadsheet must reach the choice"
+    assert "Bond Statistics" not in labels, "bond statistics is not a price list"
+    chosen = next(f for f in files if f.is_the_official_download)
+    assert "Daily-Equity-Price-List" in chosen.url
+
+
+def test_parses_a_table_keyed_by_company_and_isin():
+    """The published table carries no short code. ISIN and name must be enough."""
+    rows = [
+        ["Kakuzi Ord.5.00", "KE0000000281", 756, 400.0],
+        ["Sasini Ltd Ord 1.00", "KE0000000430", 10845, 22.5],
+        ["Eaagads Ltd Ord 1.25", "KE0000000208", 756, 12.0],
+        ["Williamson Tea Kenya Ltd Ord 5.00", "KE0000000505", 8484, 145.0],
+        ["Kapchorua Tea Co. Ltd Ord Ord 5.00", "KE4000001760", 2556, 90.0],
+        ["Limuru Tea Co. Ltd Ord 20.00", "KE0000000356", 21, 320.0],
+    ] * 2
+    data = _workbook(["Company", "ISIN Code", "Volume", "Day Price"], rows)
+    quotes = parse_workbook(data, DAY, sector="AGRICULTURAL")
+
+    assert len(quotes) == 12
+    kakuzi = quotes[0]
+    assert kakuzi.isin == "KE0000000281"
+    assert kakuzi.ticker == "KAKUZI"
+    assert kakuzi.sector == "AGRICULTURAL"
+    assert kakuzi.close == 400.0
+    assert kakuzi.volume == 756
+
+
+def test_a_malformed_isin_is_dropped_not_stored():
+    rows = [[f"Counter {i} Ltd", "NOT-AN-ISIN", 100, 10.0 + i] for i in range(20)]
+    quotes = parse_workbook(_workbook(["Company", "ISIN Code", "Volume", "Price"], rows), DAY)
+    assert len(quotes) == 20
+    assert all(q.isin is None for q in quotes), "a bad ISIN is discarded, never persisted"

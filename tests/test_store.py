@@ -106,3 +106,16 @@ def test_emit_writes_what_the_app_reads(store, tmp_path):
     index = store.emit(tmp_path / "public")
     assert index.exists()
     assert (tmp_path / "public" / "series" / "UNGA.json").exists()
+
+
+def test_a_public_emit_is_refused_while_nse_data_is_private(store, tmp_path):
+    """The licence rule lives in code, not in a comment."""
+    import pytest as _pytest
+
+    with _pytest.raises(PermissionError, match="private use only"):
+        store.emit(tmp_path / "public", private=False)
+
+
+def test_a_private_emit_is_allowed(store, tmp_path):
+    _series(store, "UNGA", 5, dt.date(2026, 8, 24))
+    assert store.emit(tmp_path / "mine", private=True).exists()

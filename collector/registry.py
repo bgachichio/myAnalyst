@@ -28,7 +28,10 @@ class Licence(str, Enum):
     OPEN = "open"
     #: Believed free, not yet verified from a machine that can reach it.
     UNVERIFIED = "unverified"
-    #: Known or strongly suspected to be licensed. No adapter until cleared.
+    #: The publisher asserts proprietary rights over it. Held for private use
+    #: only, never served publicly, never redistributed. See LICENCE-NOTES.md.
+    PROPRIETARY_PRIVATE_USE = "proprietary-private-use"
+    #: No adapter, and the store refuses to hold it.
     RESTRICTED = "restricted"
 
 
@@ -47,6 +50,15 @@ class Series:
     def collectable(self) -> bool:
         """A restricted series is registered but never fetched."""
         return self.licence is not Licence.RESTRICTED
+
+    @property
+    def publishable(self) -> bool:
+        """Whether this series may be served beyond Brian's own devices.
+
+        The NSE asserts that its data is proprietary and may not be copied, so
+        its series are held for private use and never emitted to a public path.
+        """
+        return self.licence in (Licence.OPEN, Licence.UNVERIFIED)
 
 
 #: 400 trading days is about eighteen months: a 52-week range and a one-year
@@ -78,25 +90,25 @@ REGISTRY: tuple[Series, ...] = (
     # ---- NSE ---------------------------------------------------------------
     Series(
         "nse.equity.close", "NSE end-of-day closes", Cadence.DAILY,
-        Licence.UNVERIFIED, "nse.co.ke/dataservices/market-statistics/",
+        Licence.PROPRIETARY_PRIVATE_USE, "nse.co.ke/dataservices/market-statistics/",
         "The price in every valuation. Held per counter in daily_prices, not here.",
         retention_days=WINDOW, unit="KES",
     ),
     Series(
         "nse.nasi", "NASI, all-share index", Cadence.DAILY,
-        Licence.UNVERIFIED, "nse.co.ke/dataservices/market-statistics/",
+        Licence.PROPRIETARY_PRIVATE_USE, "nse.co.ke/dataservices/market-statistics/",
         "Market context for a single-counter verdict: is this counter moving, or is the market?",
         retention_days=WINDOW, unit="index",
     ),
     Series(
         "nse.nse25", "NSE 25 Share Index", Cadence.DAILY,
-        Licence.UNVERIFIED, "nse.co.ke/dataservices/market-statistics/",
+        Licence.PROPRIETARY_PRIVATE_USE, "nse.co.ke/dataservices/market-statistics/",
         "Liquid large-cap benchmark. The relative-performance line in the memo.",
         retention_days=WINDOW, unit="index",
     ),
     Series(
         "nse.banking", "NSE Banking Sector Index", Cadence.DAILY,
-        Licence.UNVERIFIED, "nse.co.ke/dataservices/market-statistics/",
+        Licence.PROPRIETARY_PRIVATE_USE, "nse.co.ke/dataservices/market-statistics/",
         "Sector benchmark for bank profiles, where the Focus Model ratio is suppressed.",
         retention_days=WINDOW, unit="index",
     ),
@@ -110,26 +122,23 @@ REGISTRY: tuple[Series, ...] = (
     ),
 
     # ---- the hurdle --------------------------------------------------------
+    # ---- the currency check ------------------------------------------------
+    # Not a hurdle that can veto a verdict. See LICENCE-NOTES.md and the memo
+    # spec: these answer "is a shilling gain a real gain", which is the half of
+    # the Bitcoin doctrine that survives scrutiny.
+    Series(
+        "fx.usdkes", "US dollar / Kenya shilling", Cadence.DAILY,
+        Licence.UNVERIFIED, "centralbank.go.ke",
+        "Restates a KES return in hard currency, so a shilling illusion cannot pass as a gain.",
+        retention_days=WINDOW, unit="KES per USD",
+    ),
     Series(
         "btc.usd", "Bitcoin, US dollars", Cadence.DAILY,
         Licence.UNVERIFIED, "to be chosen: a free, documented, terms-clean endpoint",
-        "The Bitcoin hurdle. Mandatory in every analysis under brian §4, and absent from the request.",
+        "Second currency check alongside USD. Never vetoes a verdict; see the note in the memo spec.",
         retention_days=WINDOW, unit="USD",
     ),
 
-    # ---- registered, deliberately not collected ----------------------------
-    Series(
-        "us.djia", "Dow Jones Industrial Average", Cadence.DAILY,
-        Licence.RESTRICTED, "S&P Dow Jones Indices; index levels are licensed IP",
-        "No decision in the mandatory output turns on it. Registered so the question is not asked twice.",
-        retention_days=WINDOW, unit="index",
-    ),
-    Series(
-        "us.nasdaq", "Nasdaq Composite", Cadence.DAILY,
-        Licence.RESTRICTED, "Nasdaq; redistribution terms unverified",
-        "As above. If a global risk gauge is wanted, brian §5 already uses M2, stablecoins and USD/JPY.",
-        retention_days=WINDOW, unit="index",
-    ),
 )
 
 BY_ID: dict[str, Series] = {s.series_id: s for s in REGISTRY}
