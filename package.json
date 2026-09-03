@@ -1,0 +1,10 @@
+{
+  "name": "myanalyst",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test tests/kernel.test.mjs"
+  },
+  "devDependencies": { "typescript": "5.6.3" }
+}

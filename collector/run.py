@@ -1,0 +1,80 @@
+"""The scheduled collection run.
+
+One job: fetch the day's closes, store them, prune on schedule, emit the JSON
+the app reads, and fail loudly. It writes nothing on a partial parse, and it
+exits non-zero so the timer surfaces the failure rather than swallowing it.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import logging
+import sys
+from pathlib import Path
+
+from .nse import ParseFailed, SourceRefused, fetch_latest
+from .store import DAILY_WINDOW_DAYS, PriceStore
+
+log = logging.getLogger("collector")
+
+#: The NSE trades Monday to Friday. Kenyan public holidays are not encoded here:
+#: a holiday simply yields no new price list, which the run reports as "no data"
+#: rather than treating as a failure.
+TRADING_WEEKDAYS = frozenset({0, 1, 2, 3, 4})
+
+
+def collect(store: PriceStore, trade_date: dt.date, *, window: int, out_dir: Path | None) -> int:
+    if trade_date.weekday() not in TRADING_WEEKDAYS:
+        log.info("%s is not a trading day; nothing to collect", trade_date)
+        store.log(trade_date, 0, "skipped", "not a trading day")
+        return 0
+
+    try:
+        quotes = fetch_latest(trade_date)
+    except SourceRefused as exc:
+        log.error("source refused: %s", exc)
+        store.log(trade_date, 0, "refused", str(exc))
+        return 2
+    except ParseFailed as exc:
+        log.error("parse failed, nothing stored: %s", exc)
+        store.log(trade_date, 0, "parse-failed", str(exc))
+        return 3
+    except Exception as exc:                      # network, HTTP, anything else
+        log.exception("collection failed")
+        store.log(trade_date, 0, "error", f"{type(exc).__name__}: {exc}")
+        return 4
+
+    written = store.upsert(quotes)
+    store.log(trade_date, written, "ok")
+    log.info("stored %d closes for %s", written, trade_date)
+
+    report = store.prune(window_days=window)
+    log.info("%s", report.line())
+
+    if out_dir:
+        index = store.emit(out_dir)
+        log.info("emitted %s", index)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Collect NSE end-of-day prices.")
+    ap.add_argument("--db", default="/var/lib/myanalyst/prices.duckdb")
+    ap.add_argument("--out", default="/srv/myanalyst/public", help="where the app reads the JSON from")
+    ap.add_argument("--window", type=int, default=DAILY_WINDOW_DAYS, help="trading days of daily history kept")
+    ap.add_argument("--date", default=None, help="trade date, YYYY-MM-DD; defaults to today")
+    ap.add_argument("--prune-only", action="store_true", help="run the clean-up without fetching")
+    args = ap.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    trade_date = dt.date.fromisoformat(args.date) if args.date else dt.date.today()
+
+    with PriceStore(args.db) as store:
+        if args.prune_only:
+            log.info("%s", store.prune(window_days=args.window).line())
+            return 0
+        return collect(store, trade_date, window=args.window, out_dir=Path(args.out) if args.out else None)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

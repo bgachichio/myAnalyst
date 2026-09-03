@@ -1,0 +1,94 @@
+{
+  "_note": "Shared truth for the Python and TypeScript kernels. Both are tested against this file, so they cannot drift apart silently. Values derived from the 2016 UNGA and Liberty workbooks and agreeing with the 2017 decision notes to the cent.",
+  "params": {
+    "r": 0.1375,
+    "g": 0.04,
+    "k": 0.35,
+    "n": 15,
+    "c": 0.0,
+    "w": 0.05,
+    "stress": 0.1
+  },
+  "cases": [
+    {
+      "ticker": "UNGA",
+      "name": "UNGA Group Limited",
+      "financial_year": 2016,
+      "sector_profile": "industrial",
+      "price": 28.0,
+      "price_date": "2017-05-25",
+      "inputs": {
+        "net_profit_from_operations": 508816000,
+        "dividend_per_share_proposed": 1.0,
+        "cash_and_bank": 1102359000,
+        "shares_issued": 75706986,
+        "current_assets": 5819762000,
+        "current_liabilities": 2531888000,
+        "cash_and_securities": 1102359000,
+        "non_current_assets": 3380021000,
+        "non_current_liabilities": 971166000,
+        "total_income": 19864152000,
+        "total_expenses": 19079843000,
+        "income_tax_expense": 225585000
+      },
+      "expect": {
+        "my_future_eps": 19.48,
+        "my_valuation": 12.67,
+        "pv_dividends_ps": 2.9,
+        "cash_ps": 14.56,
+        "market_price_fe": 10.54,
+        "decision": "BUY",
+        "margin": 0.1678,
+        "eps": 6.72,
+        "trailing_pe": 4.17,
+        "nav_ps": 75.25,
+        "cigar_butt": true,
+        "liquidity_ratio": 2.3,
+        "excess_cash": -0.5646,
+        "surplus": 0.0289,
+        "stressed_surplus": -0.1581,
+        "fragility": "FRAGILE"
+      }
+    },
+    {
+      "ticker": "LBTY",
+      "name": "Liberty Kenya Holdings Limited",
+      "financial_year": 2016,
+      "sector_profile": "insurer",
+      "price": 10.2,
+      "price_date": "2017-05-25",
+      "inputs": {
+        "net_profit_from_operations": 627834000,
+        "dividend_per_share_proposed": 0.0,
+        "cash_and_bank": 4936638000,
+        "shares_issued": 535707499,
+        "current_assets": 6768546000,
+        "current_liabilities": 22307106000,
+        "cash_and_securities": 26833179000,
+        "non_current_assets": 27929285000,
+        "non_current_liabilities": 5637084000,
+        "total_income": 14821917000,
+        "total_expenses": 13899332000,
+        "income_tax_expense": 314051000
+      },
+      "expect": {
+        "my_future_eps": 3.4,
+        "my_valuation": 2.21,
+        "pv_dividends_ps": 0.0,
+        "cash_ps": 9.22,
+        "market_price_fe": 0.98,
+        "decision": "BUY",
+        "margin": 0.5541,
+        "eps": 1.17,
+        "trailing_pe": 8.7,
+        "nav_ps": 12.61,
+        "cigar_butt": true,
+        "liquidity_ratio": 0.3,
+        "excess_cash": 0.2029,
+        "surplus": 0.0428,
+        "stressed_surplus": -0.1468,
+        "fragility": "FRAGILE"
+      }
+    }
+  ]
+}

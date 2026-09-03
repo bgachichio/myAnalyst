@@ -1,0 +1,15 @@
+[project]
+name = "myanalyst"
+version = "0.1.0"
+description = "NSE equity valuation kernel and end-of-day price collector"
+requires-python = ">=3.11"
+dependencies = ["duckdb>=1.1", "httpx>=0.27", "openpyxl>=3.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+myanalyst-collect = "collector.run:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

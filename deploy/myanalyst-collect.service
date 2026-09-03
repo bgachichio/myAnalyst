@@ -1,0 +1,20 @@
+[Unit]
+Description=Collect NSE end-of-day prices
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=myanalyst
+Group=myanalyst
+EnvironmentFile=/home/myanalyst/secrets/myanalyst.env
+ExecStart=/opt/myanalyst/.venv/bin/myanalyst-collect --db ${MYANALYST_DB} --out ${MYANALYST_OUT} --window ${MYANALYST_WINDOW_DAYS}
+
+# The collector reads one public page and writes two directories. Nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/myanalyst /srv/myanalyst
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=256M
