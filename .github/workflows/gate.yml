@@ -26,6 +26,10 @@ jobs:
       - name: TypeScript kernel against the same fixtures
         run: npm test
 
+      # A gate that never builds the app it ships proves nothing about the app.
+      - name: PWA type-check and production build
+        run: npm run build
+
       # The gitleaks action scans the commit range of the push event. On the
       # first commit that range starts at a parent which does not exist: git
       # fails, nothing is scanned, and it still reports "no leaks found". A scan
