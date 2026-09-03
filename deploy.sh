@@ -44,5 +44,6 @@ if ! ssh "$HOST" "$APP_DIR/current/.venv/bin/myanalyst-collect --health --db /va
   exit 1
 fi
 
-ssh "$HOST" "ls -1dt $APP_DIR/releases/* | tail -n +4 | xargs -r rm -rf"
+# Keep current + one predecessor. Each release carries its own venv.
+ssh "$HOST" "ls -1dt $APP_DIR/releases/* | tail -n +3 | xargs -r rm -rf"
 echo "==> Deployed $RELEASE"

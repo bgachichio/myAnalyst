@@ -1,5 +1,6 @@
 [Unit]
-Description=Collect NSE end-of-day prices
+Description=myAnalyst - collect NSE closes and CBK key rates
+Documentation=https://github.com/bgachichio/myAnalyst/blob/main/DEPLOY.md
 After=network-online.target
 Wants=network-online.target
 
@@ -7,14 +8,62 @@ Wants=network-online.target
 Type=oneshot
 User=myanalyst
 Group=myanalyst
-EnvironmentFile=/home/myanalyst/secrets/myanalyst.env
-ExecStart=/opt/myanalyst/.venv/bin/myanalyst-collect --db ${MYANALYST_DB} --out ${MYANALYST_OUT} --window ${MYANALYST_WINDOW_DAYS}
 
-# The collector reads one public page and writes two directories. Nothing else.
-NoNewPrivileges=true
-PrivateTmp=true
+# Read by PID 1 before the sandbox below applies, so ProtectHome=true is fine.
+EnvironmentFile=/home/myanalyst/secrets/myanalyst.env
+
+# Through the release symlink, never a fixed release, so rollback.sh actually
+# changes what runs.
+ExecStart=/opt/myanalyst/current/.venv/bin/myanalyst-collect \
+  --db ${MYANALYST_DB} --out ${MYANALYST_OUT} --window ${MYANALYST_WINDOW_DAYS}
+
+# ---------------------------------------------------------------- isolation
+# This box also runs the website and Kenya Pulse. The collector must be unable
+# to touch either, and must lose every contest for resources rather than win it.
+
+# Filesystem: read-only everywhere, writable in exactly two directories.
 ProtectSystem=strict
-ProtectHome=read-only
+ProtectHome=true
 ReadWritePaths=/var/lib/myanalyst /srv/myanalyst
+PrivateTmp=true
+ProtectProc=invisible
+ProcSubset=pid
+
+# Privilege: none, and none obtainable.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Network: outbound HTTPS only. It listens on nothing, so it can never collide
+# with Caddy, Kenya Pulse, or any port already in use.
 RestrictAddressFamilies=AF_INET AF_INET6
+IPAddressDeny=link-local multicast
+
+# Resources: a hard ceiling, a soft throttle before it, and last place in the
+# queue. On a 1 GB box the kernel must kill this before it kills a web service.
+MemoryHigh=128M
 MemoryMax=256M
+CPUQuota=40%
+CPUWeight=20
+IOWeight=20
+Nice=10
+OOMScoreAdjust=800
+TasksMax=32
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

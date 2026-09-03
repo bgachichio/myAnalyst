@@ -40,13 +40,19 @@ Names only. No values in this document, ever.
 | Name | What it is | Where it comes from | Where it lives |
 |---|---|---|---|
 | `MYANALYST_DB` | Path to the DuckDB store | You choose it | `~/secrets/myanalyst.env` on the VM, mode 600 |
-| `MYANALYST_OUT` | Where the private JSON is written | You choose it | same file |
+| `MYANALYST_OUT` | Where the private JSON is written | `/srv/myanalyst/private` | same file |
 | `MYANALYST_WINDOW_DAYS` | Trading days of daily history kept | Default 400 | same file |
 | `TELEGRAM_BOT_TOKEN` | Alert channel, milestone 7 | BotFather | same file, not yet used |
 | `TELEGRAM_CHAT_ID` | Your chat | Telegram | same file, not yet used |
 
+The service runs as the `myanalyst` user and systemd reads this file as root
+before the sandbox applies, so it lives in the **service user's** home, not
+yours:
+
 ```sh
-ssh pulse 'install -m 600 /dev/null ~/secrets/myanalyst.env && ${EDITOR:-nano} ~/secrets/myanalyst.env'
+ssh pulse 'sudo install -d -o myanalyst -g myanalyst -m 700 /home/myanalyst/secrets'
+ssh pulse 'sudo install -o myanalyst -g myanalyst -m 600 /dev/null /home/myanalyst/secrets/myanalyst.env'
+ssh pulse 'sudo ${EDITOR:-nano} /home/myanalyst/secrets/myanalyst.env'
 ```
 
 The collector needs no API key. It reads two public pages.
@@ -95,6 +101,51 @@ fails**; and keeps the last three releases.
 The timer fires Monday to Friday at 15:00 UTC, which is 18:00 in Nairobi, after
 the close and after the price list is published, with up to ten minutes of
 random delay so the NSE is not hit by a clock.
+
+## 6a. ISOLATION - WHAT THIS SHARES WITH THE WEBSITE AND KENYA PULSE
+
+Nothing, by construction. The box runs other services; this one is built to lose
+every contest with them.
+
+**It owns four paths and touches nothing else.**
+
+| Path | What |
+|---|---|
+| `/opt/myanalyst/` | Releases and the `current` symlink |
+| `/var/lib/myanalyst/` | The DuckDB store |
+| `/srv/myanalyst/private/` | Emitted JSON. Named `private` because NSE data must never be served |
+| `/etc/systemd/system/myanalyst-collect.{service,timer}` | The unit and its schedule |
+
+**It cannot reach anything else, and this is enforced rather than intended.**
+`ProtectSystem=strict` makes the entire filesystem read-only except the two
+`ReadWritePaths`. `ProtectHome=true` makes `/home` invisible, so it cannot read
+Kenya Pulse's files or yours. `PrivateTmp=true` gives it its own `/tmp`, so it
+cannot collide with another service's temporary files. `ProtectProc=invisible`
+hides other processes from it.
+
+**It listens on no port.** It is a `oneshot` that makes outbound HTTPS requests
+and exits. There is no socket to conflict with Caddy, no port to clash with
+Kenya Pulse, and nothing to add to a reverse-proxy config. **Do not point Caddy
+at `/srv/myanalyst/private`** - that would publish NSE data and break the
+licence position in `LICENCE-NOTES.md`.
+
+**It yields under pressure.** On 1 GB, a background job must never be the reason
+a web service dies. `MemoryHigh=128M` throttles it before `MemoryMax=256M` kills
+it; `CPUQuota=40%`, `CPUWeight=20`, `IOWeight=20` and `Nice=10` put it last in
+every queue; and `OOMScoreAdjust=800` makes the kernel pick it first if memory
+runs out. It has no capabilities, no new privileges, and a `@system-service`
+syscall filter.
+
+**It shares the operating system and the package manager.** That is the one real
+coupling: a distribution upgrade affects both. It installs no system packages of
+its own - each release carries its own virtualenv - and only two releases are
+kept, since each holds a copy of its dependencies.
+
+Prove all of it on the box:
+
+```sh
+./scripts/verify-isolation.sh          # run against the VM after deploying
+```
 
 ## 7. VERIFY
 
