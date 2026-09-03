@@ -9,3 +9,7 @@ public/
 .env
 collector/fixtures/*.xlsx
 collector/fixtures/*.html
+gitleaks
+gitleaks_*.tar.gz
+checksums.txt
+audit-requirements.txt
