@@ -35,6 +35,33 @@ const COLLECTED = {
   },
 };
 
+/**
+ * Playwright resolves its own browser from PLAYWRIGHT_BROWSERS_PATH or its
+ * default cache. Only override that when someone has deliberately said where
+ * the binary is.
+ */
+async function launchChromium() {
+  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined;
+  try {
+    return await chromium.launch(executablePath ? { executablePath } : {});
+  } catch (error) {
+    console.error(
+      "\nCould not start Chromium. Playwright is installed but its browser is not.\n" +
+      "Install it once, then re-run:\n\n    npx playwright install chromium\n\n" +
+      "If the browser lives somewhere unusual, point at it with PLAYWRIGHT_CHROMIUM_PATH.\n",
+    );
+    throw error;
+  }
+}
+
+// The same policy Caddy serves in production. Without it this check runs the
+// app under rules the real site does not have, and a violation - the PDF
+// worker is the obvious candidate - would only appear after deploying.
+const CSP =
+  "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; " +
+  "script-src 'self'; connect-src 'self'; font-src 'self'; base-uri 'none'; " +
+  "form-action 'none'; frame-ancestors 'none'";
+
 const server = createServer(async (req, res) => {
   const asked = decodeURIComponent(new URL(req.url, "http://x").pathname);
   // The type comes off the file actually served, not off the path asked for:
@@ -42,13 +69,16 @@ const server = createServer(async (req, res) => {
   // rather than render it.
   const path = asked === "/" ? "/index.html" : asked;
   if (COLLECTED[path]) {
-    res.writeHead(200, { "content-type": "application/json" });
+    res.writeHead(200, { "content-type": "application/json", "content-security-policy": CSP });
     res.end(JSON.stringify(COLLECTED[path]));
     return;
   }
   try {
     const file = await readFile(join(ROOT, path));
-    res.writeHead(200, { "content-type": TYPES[extname(path)] ?? "application/octet-stream" });
+    res.writeHead(200, {
+      "content-type": TYPES[extname(path)] ?? "application/octet-stream",
+      "content-security-policy": CSP,
+    });
     res.end(file);
   } catch {
     res.writeHead(404).end("not found");
@@ -57,7 +87,31 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, r));
 const base = `http://127.0.0.1:${server.address().port}`;
 
-const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
+// Let Playwright find its own browser. An explicit path is one machine's
+// layout baked into a script that runs on several - which is exactly how this
+// check came to fail on the machine it was written to protect.
+const browser = await launchChromium();
+
+/**
+ * Everything a page complains about. Console errors matter as much as thrown
+ * ones here: a content-security-policy refusal is reported to the console and
+ * nowhere else, so a check that only listens for pageerror cannot see the
+ * policy working or failing.
+ */
+function collect(page) {
+  const problems = [];
+  const csp = [];
+  const missing = [];
+  page.on("pageerror", (e) => problems.push(e.message));
+  page.on("console", (m) => {
+    if (m.type() !== "error") return;
+    const text = m.text();
+    if (/content security policy/i.test(text)) csp.push(text);
+    else problems.push(text);
+  });
+  page.on("response", (r) => r.status() >= 400 && missing.push(`${r.status()} ${new URL(r.url()).pathname}`));
+  return { problems, csp, missing };
+}
 const failures = [];
 const check = (name, ok, detail = "") => {
   console.log(`${ok ? "  ok  " : " FAIL "} ${name}${detail ? ` — ${detail}` : ""}`);
@@ -67,10 +121,7 @@ const check = (name, ok, detail = "") => {
 try {
   for (const [theme, scheme] of [["light", "light"], ["dark", "dark"]]) {
     const page = await browser.newPage({ colorScheme: scheme, viewport: { width: 390, height: 844 } });
-    const problems = [];
-    const missing = [];
-    page.on("pageerror", (e) => problems.push(e.message));
-    page.on("response", (r) => r.status() >= 400 && missing.push(`${r.status()} ${new URL(r.url()).pathname}`));
+    const { problems, csp, missing } = collect(page);
 
     await page.goto(base, { waitUntil: "networkidle" });
     const verdict = (await page.locator(".display-sm").first().textContent()).trim();
@@ -107,14 +158,23 @@ try {
     const feed = await page.locator("text=/Collector last ran/").first().textContent();
     check(`${theme}: the app says when the collector last ran`, feed.includes("holding 1 counter."), feed.trim());
     check(`${theme}: no uncaught errors`, problems.length === 0, problems.join(" | "));
+    check(`${theme}: nothing the content security policy refuses`, csp.length === 0, csp.join(" | "));
     await page.close();
   }
 
   // The whole point: a real PDF, through the real file input.
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  const problems = [];
-  page.on("pageerror", (e) => problems.push(e.message));
+  const { problems, csp } = collect(page);
   await page.goto(base, { waitUntil: "networkidle" });
+
+  // The policy has to actually arrive. Probing it with an eval does not work:
+  // page.evaluate runs through the debugging protocol, which is exempt from the
+  // page's own policy, so it succeeds whether the policy is live or not. What
+  // does prove the listener works is that it caught a real refusal the first
+  // time this ran - the inline theme script, now a file for that reason.
+  const policy = (await (await fetch(base)).headers.get("content-security-policy")) ?? "";
+  check("the production policy reaches the browser",
+        policy.includes("script-src 'self'"), policy.slice(0, 60) + "…");
 
   await page.getByRole("button", { name: "Start blank" }).click();
   await page.locator('input[type="file"]').setInputFiles(join(ROOT, "..", "fixtures", "statement.pdf"));
@@ -141,6 +201,7 @@ try {
   check("the comparative period draws a trend", summary.includes("492,781,000"), summary.trim());
 
   check("no page errors during the read", problems.length === 0, problems.join(" | "));
+  check("the PDF reader survives the production policy", csp.length === 0, csp.join(" | "));
 
   // The private deal screen: two lenses that must be allowed to disagree.
   await page.getByRole("button", { name: "Private", exact: true }).click();
@@ -166,8 +227,7 @@ try {
 
   // The watchlist and the comparison table, which both remember across visits.
   const kept = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  const keptProblems = [];
-  kept.on("pageerror", (e) => keptProblems.push(e.message));
+  const { problems: keptProblems, csp: keptCsp } = collect(kept);
   await kept.goto(base, { waitUntil: "networkidle" });
 
   await kept.getByRole("button", { name: "Save to compare" }).click();
@@ -193,6 +253,7 @@ try {
   const remembered = await kept.locator("text=/UNGA Group Limited/").count();
   check("the watchlist survives a reload", remembered >= 1, `${remembered} entries`);
   check("no page errors on the watchlist or comparison", keptProblems.length === 0, keptProblems.join(" | "));
+  check("no policy refusals on the watchlist or comparison", keptCsp.length === 0, keptCsp.join(" | "));
 
   // The transaction cost slider, which loads the entry price and nothing else.
   await kept.getByRole("button", { name: "Analyse", exact: true }).click();

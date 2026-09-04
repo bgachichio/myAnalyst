@@ -133,8 +133,13 @@ def health(store: PriceStore, *, stale_after: int = 4) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Collect NSE end-of-day prices.")
-    ap.add_argument("--db", default="/var/lib/myanalyst/prices.duckdb")
-    ap.add_argument("--out", default="/srv/myanalyst/public", help="where the app reads the JSON from")
+    # A directory of JSON files, not a database file. The DuckDB name outlived
+    # the engine by several commits.
+    ap.add_argument("--db", default="/var/lib/myanalyst/store")
+    # "private", never "public": a directory called public will be served by
+    # something eventually, and NSE data may not be redistributed.
+    ap.add_argument("--out", default="/srv/myanalyst/private",
+                    help="where the app reads the JSON from")
     ap.add_argument("--window", type=int, default=DAILY_WINDOW_DAYS, help="trading days of daily history kept")
     ap.add_argument("--date", default=None, help="trade date, YYYY-MM-DD; defaults to today")
     ap.add_argument("--prune-only", action="store_true", help="run the clean-up without fetching")

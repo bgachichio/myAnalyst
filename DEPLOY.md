@@ -194,32 +194,57 @@ origin**, which solves two things at once: a browser cannot read nse.co.ke
 cross-origin, and NSE data must not sit on a public CDN. One hostname, one
 password, both problems gone.
 
-*Once, before the first app deploy:*
+*Once, before the first app deploy.* Four steps, and every command that needs
+Caddy runs **on the VM**, because Caddy is installed there and not on the
+Lenovo. Do not install Caddy locally to run one command.
 
 ```sh
 # 1. DNS: an A record for analyst -> the VM's address (34.35.177.164),
-#    at your registrar. Wait for it to resolve:
-dig +short analyst.gachichio.org
+#    at your registrar. Confirm before going further:
+dig +short analyst.gachichio.org          # must print 34.35.177.164
 
-# 2. A password. The hash goes on the VM; the password stays in your manager.
-caddy hash-password                       # paste the hash into the next command
+# 2. The password. Choose it, then hash it ON THE VM. The hash goes in a file
+#    the web server reads; the password itself goes in your manager and into
+#    the shell you deploy from. `ssh -t` because it prompts.
+ssh -t pulse 'caddy hash-password'        # type the password twice, copy the hash
 
-ssh pulse 'sudo install -d -o myanalyst -g myanalyst -m 755 /srv/myanalyst/app
-sudo tee -a /etc/caddy/Caddyfile < /dev/null'
+# 3. The site. Append the block, give Caddy the hash, create the app directory.
 scp deploy/Caddyfile.analyst pulse:/tmp/
-ssh pulse 'cat /tmp/Caddyfile.analyst | sudo tee -a /etc/caddy/Caddyfile >/dev/null
-sudo tee /etc/caddy/env >/dev/null <<EOF
-MYANALYST_PASSWORD_HASH=<paste the hash here>
-EOF
-sudo chmod 600 /etc/caddy/env
-sudo systemctl edit --full caddy   # add: EnvironmentFile=/etc/caddy/env
-sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy'
+ssh -t pulse 'set -e
+  sudo install -d -o myanalyst -g myanalyst -m 755 /srv/myanalyst/app
+  sudo touch /etc/caddy/Caddyfile
+  grep -q analyst.gachichio.org /etc/caddy/Caddyfile ||
+    sudo tee -a /etc/caddy/Caddyfile < /tmp/Caddyfile.analyst >/dev/null
+  rm -f /tmp/Caddyfile.analyst
+  read -rp "paste the hash: " H
+  printf "MYANALYST_PASSWORD_HASH=%s\n" "$H" | sudo tee /etc/caddy/env >/dev/null
+  sudo chmod 600 /etc/caddy/env
+  sudo chown root:root /etc/caddy/env'
+
+# 4. Let the service read that file, then reload.
+ssh pulse 'sudo systemctl edit --full caddy'   # add: EnvironmentFile=/etc/caddy/env
+ssh pulse 'sudo caddy validate --config /etc/caddy/Caddyfile &&
+           sudo systemctl reload caddy'
 ```
 
 *Every time after that:*
 
 ```sh
+# The password is only needed so the deploy can verify the site answers. Read
+# it in rather than typing it on the command line, so it never reaches history.
+read -rs MYANALYST_PASSWORD && export MYANALYST_PASSWORD
+
 ./deploy-app.sh      # builds here, ships dist/, validates Caddy, reloads, verifies
+```
+
+`deploy-app.sh` checks all of this before it builds anything: the password is
+set, the VM answers without a prompt, and the site is in the Caddyfile. A
+missing precondition stops it in two seconds rather than after the swap.
+
+**Once, on the machine you deploy from:** the browser check needs a browser.
+
+```sh
+npx playwright install chromium           # about 150 MB, once per machine
 ```
 
 Build on the Lenovo. Never on the VM.

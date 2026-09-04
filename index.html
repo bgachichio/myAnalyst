@@ -8,19 +8,15 @@
     <meta name="description" content="NSE equity valuation, on the model that produced the 2016 UNGA and Liberty verdicts." />
     <title>myAnalyst</title>
 
-    <!-- design.md §12.1. Runs before any stylesheet so the wrong theme never paints. -->
-    <script>
-      (function () {
-        try {
-          var t = localStorage.getItem('ui.theme') || 'system';
-          var dark = t === 'dark' || (t === 'system' &&
-            matchMedia('(prefers-color-scheme: dark)').matches);
-          document.documentElement.classList.toggle('dark', dark);
-          var f = localStorage.getItem('ui.fontScale') || 'default';
-          document.documentElement.dataset.fontScale = f;
-        } catch (e) {}
-      })();
-    </script>
+    <!-- Declaring an icon also stops the browser's implicit /favicon.ico
+         request, which 404s on every load without one. -->
+    <link rel="icon" href="/icon-192.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+
+    <!-- design.md §12.1. Runs before any stylesheet so the wrong theme never
+         paints. A file, not an inline script: the site is served under
+         script-src 'self' with no unsafe-inline, which refuses inline code. -->
+    <script src="/theme.js"></script>
   </head>
   <body>
     <div id="root"></div>
