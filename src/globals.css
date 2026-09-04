@@ -116,6 +116,9 @@ body {
   --color-tertiary: var(--md-tertiary);
   --color-tertiary-container: var(--md-tertiary-container);
   --color-error: var(--md-error);
+  --color-on-error: var(--md-on-error);
+  --color-error-container: var(--md-error-container);
+  --color-on-error-container: var(--md-on-error-container);
   --color-surface: var(--md-surface);
   --color-surface-container-lowest: var(--md-surface-container-lowest);
   --color-surface-container-low: var(--md-surface-container-low);

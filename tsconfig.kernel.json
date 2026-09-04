@@ -1,12 +1,15 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ES2022",
     "moduleResolution": "bundler",
     "strict": true,
     "declaration": true,
+    "skipLibCheck": true,
     "outDir": "dist",
-    "rootDir": "src/lib"
+    "rootDir": "src/lib",
+    "types": ["vite/client"]
   },
   "include": ["src/lib/**/*.ts"]
 }

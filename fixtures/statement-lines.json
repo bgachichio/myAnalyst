@@ -1,0 +1,51 @@
+{
+  "_note": "A financial statement as the readers hand it over: page names, the text of each row, and nothing else. Modelled on the 2016 UNGA report - figures in thousands, current year first, note references in the left column, dividend per share stated separately. The extractor is required to reproduce the UNGA figures in fixtures/kernel-fixtures.json from this and nothing more.",
+  "expect_scale": 1000,
+  "expect_current_is_first": true,
+  "pages": [
+    { "page": "page 12", "lines": [
+      "UNGA GROUP LIMITED",
+      "CONSOLIDATED STATEMENT OF PROFIT OR LOSS",
+      "FOR THE YEAR ENDED 30 JUNE 2016",
+      "KShs '000",
+      "Note   2016   2015",
+      "Total income   3   19,864,152   18,341,006",
+      "Total expenses   4   19,079,843   17,650,221",
+      "Profit before income tax   784,309   690,785",
+      "Income tax expense   5   225,585   198,004",
+      "Profit for the year   508,816   492,781",
+      "Earnings per share (basic and diluted)   6.72   6.51",
+      "Dividend per share proposed   1.00   0.75"
+    ] },
+    { "page": "page 13", "lines": [
+      "CONSOLIDATED STATEMENT OF FINANCIAL POSITION",
+      "AS AT 30 JUNE 2016",
+      "KShs '000",
+      "Note   2016   2015",
+      "ASSETS",
+      "Property, plant and equipment   7   3,102,884   2,844,120",
+      "Intangible assets   8   277,137   241,559",
+      "Total non-current assets   3,380,021   3,085,679",
+      "Inventories   9   2,204,551   2,011,880",
+      "Trade and other receivables   10   2,512,852   2,300,114",
+      "Cash and bank balances   11   1,102,359   988,442",
+      "Total current assets   5,819,762   5,300,436",
+      "TOTAL ASSETS   9,199,783   8,386,115",
+      "EQUITY AND LIABILITIES",
+      "Issued and fully paid   12   75,706,986   75,706,986",
+      "Retained earnings   5,062,283   4,701,116",
+      "Borrowings   13   712,004   688,553",
+      "Deferred income tax liability   14   259,162   240,880",
+      "Total non-current liabilities   971,166   929,433",
+      "Trade and other payables   15   2,187,441   2,004,772",
+      "Current income tax payable   344,447   301,004",
+      "Total current liabilities   2,531,888   2,305,776"
+    ] },
+    { "page": "page 21", "lines": [
+      "11  CASH AND CASH EQUIVALENTS",
+      "Cash and bank balances   1,102,359   988,442",
+      "Short term deposits   -   -",
+      "Cash and cash equivalents   1,102,359   988,442"
+    ] }
+  ]
+}
