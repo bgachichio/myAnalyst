@@ -251,3 +251,53 @@ def test_a_name_made_only_of_common_words_still_yields_a_counter():
     assert len(quotes) == 1
     assert quotes[0].ticker, "a ticker was derived rather than the row being skipped"
     assert quotes[0].isin == "KE0000000201"
+
+
+# --- the JSON feed behind the rendered table ------------------------------
+# The page returned a 200 with no price table in it, so the rows arrive from a
+# separate call. A feed is a contract; markup is a style choice.
+
+FEED = [
+    {"Company": "Kakuzi Ord.5.00", "ISIN Code": "KE0000000281", "Volume": "756", "Day Price": "400.00"},
+    {"Company": "Sasini Ltd Ord 1.00", "ISIN Code": "KE0000000430", "Volume": "10,845", "Day Price": "22.50"},
+    {"Company": "Suspended Ltd", "ISIN Code": "KE0000000999", "Volume": "-", "Day Price": "-"},
+]
+
+
+def test_reads_quotes_from_a_bare_list_feed():
+    from collector.nse import parse_json_feed
+
+    quotes = parse_json_feed(FEED, DAY, sector="AGRICULTURAL")
+    assert len(quotes) == 2, "the suspended counter carries no price and is skipped"
+    assert quotes[0].ticker == "KAKUZI"
+    assert quotes[0].isin == "KE0000000281"
+    assert quotes[0].close == 400.0
+    assert quotes[0].volume == 756
+    assert quotes[0].sector == "AGRICULTURAL"
+    assert quotes[1].volume == 10845, "thousands separators must not defeat the parse"
+
+
+def test_finds_the_records_wrapped_in_an_envelope():
+    from collector.nse import parse_json_feed
+
+    for envelope in ({"data": FEED}, {"status": "ok", "result": FEED}, {"rows": FEED}):
+        assert len(parse_json_feed(envelope, DAY)) == 2, f"failed on {list(envelope)}"
+
+
+def test_a_feed_with_different_key_names_still_parses():
+    from collector.nse import parse_json_feed
+
+    quotes = parse_json_feed(
+        [{"name": "Williamson Tea Kenya Ltd", "code": "WTK", "closing price": 145.0, "shares traded": 8484}],
+        DAY,
+    )
+    assert len(quotes) == 1
+    assert quotes[0].ticker == "WTK", "an explicit code beats a name-derived one"
+    assert quotes[0].close == 145.0
+
+
+def test_an_unrecognisable_payload_yields_nothing_rather_than_guessing():
+    from collector.nse import parse_json_feed
+
+    for payload in ({"message": "unauthorised"}, [], "not json", 42, None):
+        assert parse_json_feed(payload, DAY) == []

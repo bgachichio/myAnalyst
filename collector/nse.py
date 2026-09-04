@@ -190,6 +190,77 @@ def _columns(header: list[str]) -> dict[str, int]:
     return found
 
 
+def _from_mapping(row: dict, trade_date: dt.date, sector: str | None) -> Quote | None:
+    """Turn one record from a JSON feed into a Quote, matching keys by name."""
+    lowered = {_normalise(k): v for k, v in row.items()}
+
+    def pick(options: tuple[str, ...]):
+        for key, value in lowered.items():
+            if key and any(key == o or key.startswith(o) for o in options):
+                return value
+        return None
+
+    isin = str(pick(ISIN_HEADERS) or "").strip().upper() or None
+    if isin and not re.fullmatch(r"[A-Z]{2}[A-Z0-9]{9}\d", isin):
+        isin = None
+
+    ticker = str(pick(TICKER_HEADERS) or "").strip().upper()
+    if not re.fullmatch(r"[A-Z][A-Z0-9.\-]{1,11}", ticker or ""):
+        name = str(pick(NAME_HEADERS) or "")
+        all_words = re.findall(r"[A-Za-z]+", name)
+        words = [w for w in all_words if w.upper() not in NAME_NOISE] or all_words
+        ticker = "".join(words[:2]).upper()[:12] if words else ""
+    if not ticker:
+        return None
+
+    try:
+        close = float(str(pick(CLOSE_HEADERS)).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+    if close <= 0:
+        return None
+
+    try:
+        volume = int(float(str(pick(VOLUME_HEADERS)).replace(",", "").strip()))
+    except (TypeError, ValueError):
+        volume = None
+
+    row_sector = str(pick(SECTOR_HEADERS) or "").strip().upper() or sector
+    return Quote(ticker, trade_date, close, volume, SOURCE, isin=isin, sector=row_sector)
+
+
+def parse_json_feed(payload: object, trade_date: dt.date, sector: str | None = None) -> list[Quote]:
+    """Read quotes from a JSON feed, wherever the records happen to sit.
+
+    A rendered table is markup that can be restyled away; the feed behind it is
+    a contract. This accepts a bare list of records, or an object with the list
+    under any single key, which covers how these endpoints are usually shaped.
+    """
+    records: list = []
+    if isinstance(payload, list):
+        records = payload
+    elif isinstance(payload, dict):
+        for value in payload.values():
+            if isinstance(value, list) and value and isinstance(value[0], dict):
+                records = value
+                break
+
+    quotes: list[Quote] = []
+    seen: set[str] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        quote = _from_mapping(record, trade_date, sector)
+        if quote is None:
+            continue
+        key = quote.isin or quote.ticker
+        if key in seen:
+            continue
+        quotes.append(quote)
+        seen.add(key)
+    return quotes
+
+
 def parse_page_tables(html: str, trade_date: dt.date, sector: str | None = None) -> list[Quote]:
     """Read the price table straight off the page.
 
