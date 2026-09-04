@@ -163,18 +163,27 @@ operate:** the collector scrapes unattended either way.
 python -m build --wheel        # ~5 seconds, one file in dist/, under 60 KB
 ```
 
-The artefact is a pure-Python wheel. Its dependencies (`duckdb`, `httpx`,
-`openpyxl`) install from manylinux wheels, so nothing compiles on the VM.
+The artefact is a pure-Python wheel. Its dependencies (`httpx`, `openpyxl`)
+install from manylinux wheels, so nothing compiles on the VM.
 
 **The PWA:**
 
 ```sh
-npm ci && npm run build        # ~6 seconds
+npm ci && npm test && npm run build && node scripts/browser-check.mjs
 ```
 
-Type-checks first, then builds. Expect `dist/` at roughly 790 KB precached: a
-164 KB shell (53 KB gzipped) plus a 374 KB chart chunk that loads only on the
-Analyse screen. Fonts are self-hosted; nothing is fetched from a CDN at runtime.
+Type-checks, runs the browser kernel against the same fixtures as the Python
+one, builds, then drives the built app in Chromium: both themes at 390px, the
+touch floor, the collector's figures reaching the hurdle fields, a real PDF
+pushed through the real file input, the transaction-cost slider moving the
+entry price, and the watchlist surviving a reload. `deploy-app.sh` runs all of
+it and refuses to ship if any step fails.
+
+Expect `dist/` at roughly 850 KB precached: the shell plus the chart chunk that
+loads only when there is a verdict to draw. pdf.js and its worker are 1.7 MB
+between them and stay out of the precache, cached instead the first time a PDF
+is read — most sessions never open one. Fonts are self-hosted; nothing is
+fetched from a CDN at runtime.
 
 ## 6. DEPLOY
 

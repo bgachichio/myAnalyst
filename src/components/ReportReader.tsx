@@ -9,7 +9,7 @@
 import { useRef, useState } from "react";
 import { AlertTriangle, Check, FileText, X } from "lucide-react";
 import {
-  CONFIDENT, FIGURE_KEYS, labelFor,
+  CONFIDENT, FIGURE_KEYS, extract, labelFor,
   type Candidate, type Extraction, type FigureKey,
 } from "../lib/extract";
 import type { Inputs } from "../lib/kernel";
@@ -58,7 +58,6 @@ export function ReportReader({ onApply }: Props) {
             setPhase({ at: "reading", what: `${file.name}, page ${p.page} of ${p.pages}` }))
         : await (await import("../lib/xlsx")).readXlsx(file);
 
-      const { extract } = await import("../lib/extract");
       const got = extract(lines);
       const chosen: Record<string, number> = {};
       for (const c of Object.values(got.candidates) as Candidate[]) chosen[c.key] = c.value;

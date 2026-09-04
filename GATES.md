@@ -1,8 +1,78 @@
-# Gate record — myAnalyst, 3 September 2026
+# Gate record — myAnalyst, 4 September 2026
 
-Run against `building` v2.0, `developer` v1.0, `design` v1.1 and `audit` v1.0 on
-commit `a2bc541` and the two fixes above it. Evidence is a command that was run,
-not a claim.
+Run against `building` v2.0, `developer` v1.0, `design` v1.1 and `audit` v1.0.
+Evidence is a command that was run, not a claim. Where something has never been
+executed, it says so.
+
+---
+
+## The acceptance gate (`audit` v1.0)
+
+### Gate 0 — the contract
+
+**Stated.** Build the app: the full memo (ii), private deals (iii), the
+calendar and comparables (iv and v). Deterministic and confirmable, not waiting
+on a language model. Withholding at 5%. NSE charges as a slider, 0% to 10%.
+Ignore NASDAQ and DJIA. Scrape rather than upload. Serve at
+analyst.gachichio.org.
+
+**Implied.** `brian` §4's eight mandatory parts including the explicit bitcoin
+comparison; §9's four PWA defaults, DEPLOY.md and a tested rollback; `design`
+in full; `developer`'s six gates.
+
+**Assumed, and declared rather than smuggled.**
+1. The exit multiple equals the entry multiple. Printed on the memo as a
+   statement of what has to hold, not a forecast.
+2. Bitcoin's forward return cannot be forecast, so it is a rate the user sets
+   and the memo prints beside every comparison.
+3. Cross-border peer *discovery* is out of scope; cross-border *comparison* of
+   companies Brian has analysed is in. The Compare screen says so on itself.
+
+### Gate 1 — the spec
+
+**Task.** Ship myAnalyst as a working app covering Brian's five goals,
+deterministic, deployable to analyst.gachichio.org.
+
+**Artefact.** The repository at `main`, plus DEPLOY.md and this record.
+
+**Done means — five binary criteria.**
+
+1. From a real PDF and a real spreadsheet alone, the app reaches all twelve
+   figures at the correct scale and produces a verdict, verified in a browser
+   rather than asserted.
+2. Every one of `brian` §4's eight parts appears in the memo, the bitcoin
+   comparison among them.
+3. A private deal is assessed by both lenses and the disagreement is printed,
+   not averaged.
+4. The dividend deadline is derived from the books-closure date through NSE
+   settlement and Kenya's holidays, with the arithmetic stated on screen.
+5. No verdict is computed by a language model, and no shipped dependency
+   carries a known advisory.
+
+**Out of scope.** Scraping the JSE for peers. A journal screen. A model
+gateway.
+
+**Kill condition.** A figure reaching a verdict without the reader being able
+to see where it came from.
+
+### Gate 3 — the grade
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Twelve figures off a real file, right scale, in a browser | **PASS** | `node scripts/browser-check.mjs`: "the reader finds all twelve figures in the PDF — 12 of 12", "every figure cites the page it came from — 12 citations", "total income arrived at full scale — 19864152000". The same bar in CI without a browser: `tests/pdf.test.mjs`, `tests/xlsx.test.mjs`, `tests/extract.test.mjs` each reproduce the UNGA inputs from their own file |
+| 2 | All eight parts, bitcoin included | **PASS** | `src/components/MemoView.tsx` carries (i) base and worst with assumptions, (ii)-(iv) the three trends, (v) the deal, (vi) the levers, (vii) the 0-7 score, (viii) the verdict with bullets. `tests/memo.test.mjs` asserts each, including "bitcoin is compared explicitly and the assumption is carried with it" and that it never overturns the verdict |
+| 3 | Two lenses, disagreement printed | **PASS** | `tests/private.test.mjs` "the two lenses are allowed to disagree, and the disagreement is the finding". Browser: "the worked deal is the case the screen exists for — HOLD", "the disagreement between the lenses is printed, not averaged — 1 statement" |
+| 4 | The deadline, derived and stated | **PASS** | `tests/calendar.test.mjs`, 14 tests, every date checked against a calendar before it was written down. Browser: "The register closes on 2030-06-04. The NSE settles 3 trading days after the trade, so the last day to buy and still be on it is 2030-05-30" |
+| 5 | No model, no advisory | **PASS** | `grep -rniE "openai\|anthropic\|gemini\|litellm\|api[_-]?key" src/` returns nothing. `npm audit`: **0 vulnerabilities**, after upgrading vite 5→8, plugin-react 4→6 and vite-plugin-pwa 0.21→1.3 to clear three dev-server advisories |
+
+**Excess test.** Nothing out of scope shipped. The Journal placeholder was
+**deleted**: it promised a screen nothing was building.
+
+**Kill test.** Did not fire. Every extracted figure carries its source line,
+page and confidence; every memo figure carries the parameters that produced it;
+every restated multiple prints its own arithmetic.
+
+`Audit · 5/5 · rebuilds 0 · defect none`
 
 ---
 
@@ -10,15 +80,13 @@ not a claim.
 
 | § | Requirement | Verdict | Evidence |
 |---|---|---|---|
-| 0 | Preflight before any code | PASS | Both blocks printed before the PWA was scaffolded |
-| 1 | Selection law, all five | PASS | Every dependency OSI-licensed, free at this volume, small, runs offline, replaceable |
-| 2 | Canonical stack | PASS with one deviation | React + Vite + Tailwind v4 + lucide + recharts + vite-plugin-pwa; Python 3.12; Data at **rung 0**: plain JSON, no engine. DuckDB was dropped as over-specified for 65 counters. **Deviation: `pip`, not `uv`.** No `uv` in this environment; the pinned manifest gives the same determinism |
-| 3 | Memory law | **PASS** | Peak measured at **32 MB** and 986 KB on disk, against a store of 26,001 closes. It was 132 MB on DuckDB: plain JSON is the right rung for this much data and costs four times less memory and three times less disk. Rule 2 satisfied on 3 September: the VM reports **485 MB available of 969 MB** and 17 GB of 30 GB free, so a 32 MB spike takes 6.6% of headroom. Recorded in DEPLOY.md §2, together with the 309 MB of swap already in use |
-| 5 | Local-first default shape | PASS | The PWA holds the kernel and runs offline with no back end. The only server is the collector, and only because a browser cannot fetch either source cross-origin |
-| 6 | The four defaults | PASS | Verified in a browser: both toggles apply live, persist, survive reload, no flash |
-| 7 | Standard project | PASS with one stated omission | README, DEPLOY.md, .env.example, .pre-commit-config.yaml, src/, gate.yml all present. **No `compose.yaml`**: there is no stack to stand up. The app is `npm run dev` and the collector is a CLI against a local file. A compose file here would be scaffolding, and the Load-Bearing test deletes it |
-| 8 | DEPLOY.md, nine sections | PASS | All nine, both artefacts, with the rollback marked untested |
-| 9 | Banned list | PASS | No MUI, no chart.js, no CDN font tags, no Kubernetes, no `latest` tags, no `curl \| bash`, no long-lived keys, no build on the VM |
+| 1 | Selection law, all five | PASS | Every dependency OSI-licensed, free at this volume, small, offline-capable, replaceable. The spreadsheet reader is **no dependency at all**: the obvious library carries a published advisory in the version npm serves and the fixed build lives outside the registry, so `src/lib/xlsx.ts` reads the zip with the browser's own `DecompressionStream` |
+| 2 | Canonical stack | PASS, one deviation | React + Vite + Tailwind v4 + lucide + recharts + vite-plugin-pwa; Python 3.11; data at rung 0, plain JSON. **Deviation: `pip`, not `uv`** — none in this environment; the pinned manifest gives the same determinism |
+| 3 | Memory law | PASS | Collector peak measured at **32 MB**, store 986 KB, against a VM reporting 485 MB available |
+| 5 | Local-first | PASS | The whole analysis runs in the browser. Reports are read on the device and never uploaded. The only server is the collector, and only because a browser cannot fetch either source cross-origin |
+| 6 | The four defaults | PASS | Four font steps (`SCALES`), Auto/Light/Dark (`THEMES`), settings one tap away and stored in `localStorage`, installable PWA with an offline shell. No-FOUC script in `index.html`. Both themes verified in Chromium at 390px |
+| 8 | DEPLOY.md, nine sections | PASS | All nine. The rollback is still marked untested |
+| 9 | Banned list | PASS | No MUI, no chart.js, no CDN fonts, no Kubernetes, no `latest` tags, no `curl \| bash`, no long-lived keys, no build on the VM |
 
 ---
 
@@ -26,36 +94,36 @@ not a claim.
 
 | Gate | Verdict | Evidence |
 |---|---|---|
-| **G0 Secrets & identity** | **PASS** | `gitleaks git .` over the whole history: 8 commits scanned, no leaks. No credential in any file. A test asserts the Telegram token can never reach a log line |
-| **G1 Necessity & design** | **PASS** | Three Questions answered in the brief §4. Delta-4 scored against the 2017 workbooks, which cannot watch a dividend calendar |
-| **G2 Code integrity** | **PASS** | 76 tests over the money and data paths: 6 kernel, 10 price provenance, 11 store and retention, 10 registry and licence, 12 NSE parsing, 7 CBK parsing, 4 alerting, 9 TypeScript. Two implementations of the kernel held to one fixture file so they cannot drift. No dead exports |
-| **G3 Supply chain** | **PASS**, after a fix | Was an auto-fail: Python dependencies were floors (`>=`) with no lockfile. Now pinned exactly. `package-lock.json` committed, every GitHub Action pinned to a 40-character SHA, 0 npm production advisories, 0 Python advisories |
-| **G4 Runtime & deploy** | **PASS**, one item unproven | Non-root service user, no capabilities, health check that passes only on recent good data, atomic symlink swap, self-rollback on health failure, never builds on the VM. **The rollback has never been executed** — DEPLOY.md §8 says so rather than implying otherwise |
-| **G5 Observability & recovery** | **PARTIAL** | journald plus a `collection_log` table; alerts now fire on a refused source, an unparseable page, an unexpected error, and a store that has stopped advancing. **The alert has never been delivered** and there has been **no restore drill**. `--test-alert` exists precisely to close the first on the box |
+| **G0 Secrets** | **PASS** | No credential in any file. A test asserts the Telegram token can never reach a log line |
+| **G1 Necessity** | **PASS** | Three Questions in the build brief §4. One deletion this round: the Journal placeholder |
+| **G2 Code integrity** | **PASS** | **202 tests**: 103 Python over the kernel, store, registry and adapters; 99 TypeScript over the kernel, the memo, the reader, the private deal, the calendar and the comparison. Two implementations of the kernel held to one fixture file so they cannot drift. Plus **37 browser checks** on the built app |
+| **G3 Supply chain** | **PASS** | Python dependencies pinned exactly; `package-lock.json` committed; **0 npm advisories** at any level, production and development, after the vite upgrade; 0 Python advisories. `pdfjs-dist` pinned to 5.5.207 because version 6 declares support for Node 22 and then calls `Promise.try`, which Node 22 does not have |
+| **G4 Runtime & deploy** | **PASS**, one item unproven | Non-root service user, no capabilities, atomic directory swap, health check that passes only on recent good data, never builds on the VM. `deploy-app.sh` now runs the unit tests and the browser check before anything ships. **The rollback has never been executed** |
+| **G5 Observability** | **PARTIAL** | journald plus a collection log; alerts fire on a refused source, an unparseable page, an unexpected error, and a store that has stopped advancing. **The alert has never been delivered and there has been no restore drill** |
 
 ---
 
 ## design
 
-Full checklist and what verification found: `DESIGN-COMPLIANCE.md`. **PASS**,
-verified in headless Chromium at 390×900 and 1280×900, in both themes and at
-every font scale. Three defects were found by looking and fixed before the
-grade: page-wide horizontal overflow from an `sr-only` table, a duplicated
-settings entry point on mobile, and a settings sheet that could not be opened
-at all.
+`DESIGN-COMPLIANCE.md` has the checklist. **PASS**, verified in headless
+Chromium at 390×844 in both themes: the touch floor on every control (screen
+-reader-only controls excluded, because measuring a clip measures the clip),
+no horizontal overflow on any screen, theme tokens applied, no console errors,
+every chart carrying a title, a unit, a direct label and a summary that doubles
+as its accessible description.
 
 ---
 
 ## What is still not true
 
-Three things, none of which a document can fix, and all three now close on the
-box rather than here:
+Unchanged from the last record, and none of it fixable from here:
 
-1. **No adapter has ever made a live call.** Nothing in this session had a route
-   to nse.co.ke or centralbank.go.ke. The first `deploy.sh` run answers it.
-2. **The rollback has never been run.** One command, immediately after the first
-   deploy, then write the date into DEPLOY.md §8.
+1. **No adapter has ever made a live call to nse.co.ke or centralbank.go.ke
+   from this machine.** The equity feed is client-rendered and its endpoint is
+   still unknown; `myanalyst-probe` exists to find it and has never been run.
+   Three index levels do collect.
+2. **The rollback has never been run.** One command after the first deploy,
+   then the date goes into DEPLOY.md §8.
 3. **The alert has never been delivered, and no restore drill has been held.**
-   `--test-alert` closes the first.
 
-Every gate a machine here could settle is settled. These three need the VM.
+Everything a machine here could settle is settled. These three need the VM.
