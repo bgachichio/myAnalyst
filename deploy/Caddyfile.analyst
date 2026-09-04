@@ -52,10 +52,11 @@ analyst.gachichio.org {
 	@data path /data/*
 	header @data Cache-Control "no-store"
 
-	log {
-		output file /var/log/caddy/analyst.log {
-			roll_size 10mb
-			roll_keep 3
-		}
-	}
+	# No `log { output file ... }`. Caddy writes access logs to stderr, which
+	# systemd already captures into the journal alongside every other site on
+	# this machine: `journalctl -u caddy`. A log file needs a directory with the
+	# right owner, and `caddy validate` never looks at the filesystem - so a
+	# permission problem there passes validation and then refuses to start the
+	# whole server, taking every other site down with it. That is a large risk
+	# for a file nobody was going to read.
 }

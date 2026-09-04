@@ -3,5 +3,5 @@
 set -euo pipefail
 HOST="${MYANALYST_HOST:-pulse}"
 echo "==> Removing myAnalyst from Caddy on $HOST"
-scp -q deploy/rollback-remote.sh "$HOST:/tmp/"
-ssh "$HOST" 'sudo bash /tmp/rollback-remote.sh; rm -f /tmp/rollback-remote.sh'
+scp -q deploy/rollback-remote.sh deploy/caddyfile-block.py "$HOST:/tmp/"
+ssh "$HOST" 'sudo bash /tmp/rollback-remote.sh; rm -f /tmp/rollback-remote.sh /tmp/caddyfile-block.py'

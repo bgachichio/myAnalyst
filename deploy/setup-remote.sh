@@ -51,21 +51,15 @@ touch "$ETC_CADDY/Caddyfile"
 # restores, and it is the difference between "myAnalyst did not deploy" and
 # "the web server is down and nobody remembers what was in the config".
 BACKUP="$ETC_CADDY/Caddyfile.pre-myanalyst"
-[ -f "$BACKUP" ] || { cp "$ETC_CADDY/Caddyfile" "$BACKUP"; echo "    backed up the Caddyfile to $BACKUP"; }
-
-# Caddy writes this site's access log to a file, and it creates the file but
-# not the directory. `caddy validate` does not look at the filesystem, so a
-# missing directory passes validation and then fails at startup - taking every
-# other site on this machine down with it.
-LOG_DIR="/var/log/caddy"
-CADDY_USER="$(systemctl show -p User --value caddy 2>/dev/null || true)"
-[ -n "$CADDY_USER" ] || CADDY_USER=caddy
-if id -u "$CADDY_USER" >/dev/null 2>&1; then
-  install -d -o "$CADDY_USER" -g "$CADDY_USER" -m 755 "$LOG_DIR"
-else
-  install -d -m 755 "$LOG_DIR"
+STRIPPER="${STRIPPER:-/tmp/caddyfile-block.py}"
+if [ ! -f "$BACKUP" ]; then
+  cp "$ETC_CADDY/Caddyfile" "$BACKUP"
+  # The backup must be the config WITHOUT myAnalyst, whatever the live file
+  # holds when it is taken. Taking it after a previous run had appended the
+  # block made the rollback restore the very thing it was undoing.
+  python3 "$STRIPPER" "$BACKUP" >/dev/null
+  echo "    backed up the Caddyfile to $BACKUP, without any myAnalyst block"
 fi
-echo "    $LOG_DIR exists and belongs to $CADDY_USER"
 
 if grep -q "$SITE" "$ETC_CADDY/Caddyfile"; then
   echo "    the site block is already in the Caddyfile, leaving it alone"
@@ -123,6 +117,7 @@ if ! $SYSTEMCTL restart caddy || { sleep 1; ! $SYSTEMCTL is-active --quiet caddy
   echo "!! Putting the Caddyfile back so the other sites on this machine keep serving." >&2
   if [ -f "$BACKUP" ]; then
     cp "$BACKUP" "$ETC_CADDY/Caddyfile"
+    python3 "$STRIPPER" "$ETC_CADDY/Caddyfile" >/dev/null || true
     rm -f "$UNIT_DIR/caddy.service.d/myanalyst-env.conf"
     $SYSTEMCTL daemon-reload
     $SYSTEMCTL restart caddy || true
