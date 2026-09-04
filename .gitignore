@@ -13,3 +13,4 @@ gitleaks
 gitleaks_*.tar.gz
 checksums.txt
 audit-requirements.txt
+*.egg-info/
