@@ -3,6 +3,8 @@ __pycache__/
 .venv/
 node_modules/
 dist/
+build/
+.rehearsal/
 collector-output/
 .env
 collector/fixtures/*.xlsx

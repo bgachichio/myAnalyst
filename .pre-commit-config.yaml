@@ -24,6 +24,16 @@ repos:
 
   - repo: local
     hooks:
+      # Build artefacts have been committed twice: egg-info, then build/lib.
+      # A habit failed, so this is a rule now.
+      - id: no-build-artefacts
+        name: no build artefacts staged
+        entry: sh -c 'git diff --cached --name-only --diff-filter=d | grep -E "^(build|dist)/|\.egg-info/" && { echo "build artefact staged - remove it"; exit 1; } || exit 0'
+        language: system
+        pass_filenames: false
+
+  - repo: local
+    hooks:
       - id: kernel-fixtures
         name: kernel reproduces the 2016 workbooks
         entry: python -m pytest -q tests/test_kernel.py
