@@ -47,7 +47,29 @@
         "excess_cash": -0.5646,
         "surplus": 0.0289,
         "stressed_surplus": -0.1581,
-        "fragility": "FRAGILE"
+        "fragility": "FRAGILE",
+        "analysis": {
+          "debt": 3503054000,
+          "verdict": "BUY",
+          "market_cap": 2119795608.0,
+          "enterprise_value": 4520490608.0,
+          "ebitda": 784309000,
+          "ev_ebitda": 5.7637,
+          "price_to_book": 0.3721,
+          "gross_yield": 0.0357,
+          "net_yield": 0.0339,
+          "beats_inflation": false,
+          "real_yield": -0.0451,
+          "entry_in_usd": 0.2708,
+          "entry_in_btc": 0.00012309,
+          "energy": {
+            "valuation": 2,
+            "yield": 0,
+            "growth_quality": 1,
+            "total": 3,
+            "band": "Mixed"
+          }
+        }
       }
     },
     {
@@ -87,8 +109,98 @@
         "excess_cash": 0.2029,
         "surplus": 0.0428,
         "stressed_surplus": -0.1468,
-        "fragility": "FRAGILE"
+        "fragility": "FRAGILE",
+        "analysis": {
+          "debt": 27944190000,
+          "verdict": "BUY",
+          "market_cap": 5464216489.8,
+          "enterprise_value": 6575227489.8,
+          "ebitda": 922585000,
+          "ev_ebitda": 7.127,
+          "price_to_book": 0.8091,
+          "gross_yield": 0.0,
+          "net_yield": 0.0,
+          "beats_inflation": false,
+          "real_yield": -0.079,
+          "entry_in_usd": 0.0986,
+          "entry_in_btc": 4.484e-05,
+          "energy": {
+            "valuation": 3,
+            "yield": 0,
+            "growth_quality": 0,
+            "total": 3,
+            "band": "Mixed"
+          }
+        }
       }
     }
-  ]
+  ],
+  "macro": {
+    "_note": "Hurdle assumptions used by the analysis fixtures. Kenyan CPI and the shilling as at the 2017 decision date, so the fixture stays reproducible.",
+    "inflation": 0.079,
+    "usd_kes": 103.4,
+    "btc_usd": 2200.0
+  },
+  "analysis_cases": {
+    "_note": "Cases the two workbooks do not reach: HOLD, SELL, and a return on an assumed exit. Values computed by kernel/analysis.py, not by hand.",
+    "verdicts": [
+      {
+        "margin": 0.5,
+        "expect": "BUY"
+      },
+      {
+        "margin": 0.15,
+        "expect": "BUY"
+      },
+      {
+        "margin": 0.14,
+        "expect": "HOLD"
+      },
+      {
+        "margin": 0.0,
+        "expect": "HOLD"
+      },
+      {
+        "margin": -0.01,
+        "expect": "SELL"
+      }
+    ],
+    "irr": [
+      {
+        "entry": 28.0,
+        "exit": 56.0,
+        "years": 5,
+        "income": 1.0,
+        "expect": 0.1765
+      },
+      {
+        "entry": 100.0,
+        "exit": 200.0,
+        "years": 10,
+        "income": 0.0,
+        "expect": 0.0718
+      },
+      {
+        "entry": 100.0,
+        "exit": 50.0,
+        "years": 5,
+        "income": 0.0,
+        "expect": -0.1294
+      },
+      {
+        "entry": 100.0,
+        "exit": 0.0,
+        "years": 5,
+        "income": 0.0,
+        "expect": null
+      },
+      {
+        "entry": 0.0,
+        "exit": 50.0,
+        "years": 5,
+        "income": 0.0,
+        "expect": null
+      }
+    ]
+  }
 }
