@@ -23,11 +23,16 @@ static and public. The collector's data never goes there.
 On the Lenovo (Zorin OS 18), where every build happens:
 
 ```sh
-python3 --version        # 3.12 or newer
+python3 --version        # 3.12 or newer. Note: python3, not python -
+                         # Debian and its derivatives do not ship a bare `python`
 node --version           # 22 or newer
-pip install build        # the wheel builder
 ssh pulse 'echo ok'      # the VM, alias in ~/.ssh/config
 ```
+
+**Zorin marks the system Python as externally managed (PEP 668), so a bare
+`pip install` is refused, and rightly.** Everything goes in a project
+virtualenv. Never `--break-system-packages`: the point of the rule is that a
+build tool must not be able to damage the operating system.
 
 On the VM (`deltabot-vm-za`, Debian 12, af-south1, 1 GB), once ever:
 
@@ -128,13 +133,20 @@ Clean checkout to running locally:
 
 ```sh
 git clone https://github.com/bgachichio/myAnalyst && cd myAnalyst
-pip install -e ".[dev]"
-npm install
-python -m pytest -q     # expect: 66 passed, 3 skipped
-npm test                # expect: pass 9, fail 0
-myanalyst-collect --db ./prices.duckdb --out ./private --date 2026-09-02
-myanalyst-collect --db ./prices.duckdb --health
+
+python3 -m venv .venv                      # PEP 668: never system-wide
+.venv/bin/pip install -e ".[dev]" build
+npm ci
+
+.venv/bin/python -m pytest -q              # expect: 76 passed, 3 skipped
+npm test                                   # expect: pass 9, fail 0
+
+.venv/bin/myanalyst-collect --db ./store --out ./private --date 2026-09-04
+.venv/bin/myanalyst-collect --db ./store --health
 ```
+
+`deploy.sh` finds `.venv/bin/python` on its own, so once the virtualenv exists
+you never have to think about it again.
 
 The three skips are optional live-source tests. The parsers are covered by
 tests built from the real page's structure; these extra ones only run if you

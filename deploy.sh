@@ -5,16 +5,42 @@
 set -euo pipefail
 
 HOST="${MYANALYST_HOST:-pulse}"
+
+# Debian and its derivatives ship python3, not python, and mark the system
+# environment externally managed (PEP 668). Prefer the project virtualenv, fall
+# back to python3, and say so plainly rather than dying on "command not found".
+if [ -x .venv/bin/python ]; then
+  PYTHON=".venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON="python3"
+else
+  echo "!! no python3 on PATH. Install it, or create the venv: python3 -m venv .venv" >&2
+  exit 1
+fi
+
+if ! "$PYTHON" -c "import pytest, build" 2>/dev/null; then
+  cat >&2 <<'MISSING'
+!! pytest and build are not available to this interpreter.
+
+   On Debian, Zorin and friends the system Python is externally managed, so
+   install into the project virtualenv instead of system-wide:
+
+     python3 -m venv .venv
+     .venv/bin/pip install -e ".[dev]" build
+
+MISSING
+  exit 1
+fi
 APP_DIR="/opt/myanalyst"
 RELEASE="$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
 
 echo "==> Verifying locally before anything leaves this machine"
-python -m pytest -q
+"$PYTHON" -m pytest -q
 npm test
 
 echo "==> Building the wheel here"
 rm -rf dist/*.whl
-python -m build --wheel
+"$PYTHON" -m build --wheel
 
 echo "==> Shipping release $RELEASE"
 ssh "$HOST" "mkdir -p $APP_DIR/releases/$RELEASE"
