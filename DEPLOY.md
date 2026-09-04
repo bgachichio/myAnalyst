@@ -209,60 +209,41 @@ origin**, which solves two things at once: a browser cannot read nse.co.ke
 cross-origin, and NSE data must not sit on a public CDN. One hostname, one
 password, both problems gone.
 
-*Once, before the first app deploy.* Four steps, and every command that needs
-Caddy runs **on the VM**, because Caddy is installed there and not on the
-Lenovo. Do not install Caddy locally to run one command.
+*Once, before the first app deploy.* Two commands. The first configures the VM
+and asks for the site password there; the second ships the app and asks for the
+same password so it can prove the site answers.
 
 ```sh
-# 1. DNS: an A record for analyst -> the VM's address (34.35.177.164),
-#    at your registrar. Confirm before going further:
-dig +short analyst.gachichio.org          # must print 34.35.177.164
+# 1. Once on the machine you deploy from: the browser check needs a browser.
+npx playwright install chromium           # about 150 MB, once
 
-# 2. The password. Choose it, then hash it ON THE VM. The hash goes in a file
-#    the web server reads; the password itself goes in your manager and into
-#    the shell you deploy from. `ssh -t` because it prompts.
-# Nothing echoes as you type, not even dots. "Error: password does not match"
-# means the two entries differed - retype both, it is not a failure of anything.
-ssh -t pulse 'caddy hash-password'        # type the password twice, copy the hash
+# 2. Once, for the VM. Prompts for the password on the VM and writes the hash
+#    there. Safe to re-run: it changes nothing that is already correct.
+./setup-site.sh
 
-# 3. The site. Append the block, give Caddy the hash, create the app directory.
-scp deploy/Caddyfile.analyst pulse:/tmp/
-ssh -t pulse 'set -e
-  sudo install -d -o myanalyst -g myanalyst -m 755 /srv/myanalyst/app
-  sudo touch /etc/caddy/Caddyfile
-  grep -q analyst.gachichio.org /etc/caddy/Caddyfile ||
-    sudo tee -a /etc/caddy/Caddyfile < /tmp/Caddyfile.analyst >/dev/null
-  rm -f /tmp/Caddyfile.analyst
-  read -rp "paste the hash: " H
-  printf "MYANALYST_PASSWORD_HASH=%s\n" "$H" | sudo tee /etc/caddy/env >/dev/null
-  sudo chmod 600 /etc/caddy/env
-  sudo chown root:root /etc/caddy/env'
-
-# 4. Let the service read that file, then reload.
-ssh pulse 'sudo systemctl edit --full caddy'   # add: EnvironmentFile=/etc/caddy/env
-ssh pulse 'sudo caddy validate --config /etc/caddy/Caddyfile &&
-           sudo systemctl reload caddy'
+# 3. Every time.
+./deploy-app.sh
 ```
 
-*Every time after that:*
+DNS must already point at the VM. Confirm with `dig +short analyst.gachichio.org`,
+which must print `34.35.177.164`.
 
-```sh
-# The password is only needed so the deploy can verify the site answers. Read
-# it in rather than typing it on the command line, so it never reaches history.
-read -rs MYANALYST_PASSWORD && export MYANALYST_PASSWORD
+`setup-site.sh` copies the site block to the VM and runs `deploy/setup-remote.sh`
+there under `sudo` with a terminal. That script creates `/srv/myanalyst/app` and
+`/srv/myanalyst/private`, appends the site block if it is not already there,
+runs `caddy hash-password` **on the VM** and writes the hash straight into
+`/etc/caddy/env` — no copying a hash between windows — installs a systemd
+drop-in so Caddy reads that file, validates the config, and restarts Caddy. It
+restarts rather than reloads on purpose: a reload re-reads the Caddyfile but not
+the unit's `EnvironmentFile`, so the hash would never reach the process.
 
-./deploy-app.sh      # builds here, ships dist/, validates Caddy, reloads, verifies
-```
+Every step checks whether it has already been done, so re-running after a
+failure is safe. If `caddy hash-password` returns anything that is not a bcrypt
+hash, it refuses to write the file rather than putting a prompt in your config.
 
-`deploy-app.sh` checks all of this before it builds anything: the password is
-set, the VM answers without a prompt, and the site is in the Caddyfile. A
-missing precondition stops it in two seconds rather than after the swap.
-
-**Once, on the machine you deploy from:** the browser check needs a browser.
-
-```sh
-npx playwright install chromium           # about 150 MB, once per machine
-```
+`deploy-app.sh` checks its preconditions before it builds anything: the VM
+answers without a prompt, and the site is in the Caddyfile. A missing
+precondition stops it in two seconds rather than after the swap.
 
 Build on the Lenovo. Never on the VM.
 

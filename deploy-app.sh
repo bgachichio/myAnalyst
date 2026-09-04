@@ -12,16 +12,25 @@ SITE="analyst.gachichio.org"
 # tells you to roll back a release that was fine.
 echo "==> Preflight"
 
+# The password is needed only so the deploy can prove the site answers. Ask for
+# it here rather than making it a step of its own: setting it beforehand meant
+# two lines, and two lines pasted together let `read` swallow an empty one and
+# hand the deploy a blank password.
 if [ -z "${MYANALYST_PASSWORD:-}" ]; then
-  cat >&2 <<'MISSING'
-!! MYANALYST_PASSWORD is not set, so the verification step cannot authenticate.
-   It is the password behind the site, not the hash that sits on the VM. Set it
-   for this shell only, so it never reaches your history:
-
-     read -rs MYANALYST_PASSWORD && export MYANALYST_PASSWORD
-
-MISSING
-  exit 1
+  if [ -t 0 ]; then
+    for attempt in 1 2 3; do
+      printf 'Site password for %s (nothing echoes): ' "$SITE" >&2
+      IFS= read -rs MYANALYST_PASSWORD < /dev/tty || true
+      printf '\n' >&2
+      [ -n "$MYANALYST_PASSWORD" ] && break
+      echo "   empty; try again ($attempt of 3)" >&2
+    done
+    [ -n "$MYANALYST_PASSWORD" ] || { echo "!! no password given." >&2; exit 1; }
+  else
+    echo "!! MYANALYST_PASSWORD is not set and there is no terminal to ask on." >&2
+    echo "   Export it before running this non-interactively." >&2
+    exit 1
+  fi
 fi
 
 ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOST" true 2>/dev/null || {
