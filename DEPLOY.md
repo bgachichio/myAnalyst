@@ -82,11 +82,32 @@ The service runs as the `myanalyst` user and systemd reads this file as root
 before the sandbox applies, so it lives in the **service user's** home, not
 yours:
 
+Two steps, because only one of the five values is a secret.
+
+**The paths are not secrets.** Write them straight in — nothing sensitive
+reaches your shell history:
+
 ```sh
-ssh pulse 'sudo install -d -o myanalyst -g myanalyst -m 700 /home/myanalyst/secrets'
-ssh pulse 'sudo install -o myanalyst -g myanalyst -m 600 /dev/null /home/myanalyst/secrets/myanalyst.env'
-ssh pulse 'sudo ${EDITOR:-nano} /home/myanalyst/secrets/myanalyst.env'
+ssh pulse 'sudo install -d -o myanalyst -g myanalyst -m 700 /home/myanalyst/secrets
+sudo tee /home/myanalyst/secrets/myanalyst.env >/dev/null <<EOF
+MYANALYST_DB=/var/lib/myanalyst/store
+MYANALYST_OUT=/srv/myanalyst/private
+MYANALYST_WINDOW_DAYS=400
+EOF
+sudo chown myanalyst:myanalyst /home/myanalyst/secrets/myanalyst.env
+sudo chmod 600 /home/myanalyst/secrets/myanalyst.env'
 ```
+
+**The Telegram pair is a secret**, so it goes in through an editor and never
+through a command line. `ssh` needs `-t` to give the editor a terminal —
+without it you get `Error opening terminal: unknown`:
+
+```sh
+ssh -t pulse 'sudo nano /home/myanalyst/secrets/myanalyst.env'
+```
+
+Append `TELEGRAM_BOT_TOKEN=` and `TELEGRAM_CHAT_ID=` with their values. The
+collector runs without them; it simply cannot tell you when it fails.
 
 The collector needs no API key to read its two sources. The Telegram pair is
 for alerts only, never a control plane, and without it a failed run is silent.
