@@ -43,8 +43,16 @@ ssh "$HOST" bash -euo pipefail <<'REMOTE'
 REMOTE
 
 echo "==> Verifying"
-code="$(curl -fsS -o /dev/null -w '%{http_code}' -u "brian:${MYANALYST_PASSWORD:-}" \
-  https://analyst.gachichio.org/ || true)"
+# The password goes in on stdin, never in argv. curl does blank out a -u value
+# in its own argv once it has parsed it - measured, not assumed - so the `ps`
+# window is brief rather than open. What the blanking cannot reach is
+# everything upstream of exec: the shell expands the variable into the command
+# line first, so it lands in a `set -x` trace, in shell history when this is
+# run by hand, and in any CI log that echoes commands. --config - keeps it out
+# of all of those, and out of the secret scanner's pattern.
+code="$(printf 'user = "brian:%s"\n' "${MYANALYST_PASSWORD:-}" |
+  curl -fsS --config - -o /dev/null -w '%{http_code}' \
+    https://analyst.gachichio.org/ || true)"
 echo "    https://analyst.gachichio.org/ -> $code"
 test "$code" = "200" || {
   echo "!! not serving. Roll back with: ssh $HOST 'sudo rm -rf $APP_DIR && sudo mv $APP_DIR.old $APP_DIR && sudo systemctl reload caddy'"

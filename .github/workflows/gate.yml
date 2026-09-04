@@ -50,9 +50,24 @@ jobs:
           echo "history carries $commits commits"
           test "$commits" -gt 0
 
+          # Prove the scanner is detecting before trusting it to report clean.
+          # A scanner that has silently stopped matching returns exit 0 on
+          # everything, which is indistinguishable from a clean repository.
+          # The token is generated here and never committed, because committing
+          # it would fail the scan above - which is the point.
+          canary="$(mktemp -d)"
+          python3 -c "import random,string;print('ghp_'+''.join(random.choices(string.ascii_letters+string.digits,k=36)))" \
+            > "$canary/token.txt"
+          if ./gitleaks dir "$canary" --no-banner --redact --exit-code 1 >/dev/null 2>&1; then
+            echo "!! the secret scanner did not flag a planted token; it is not detecting" >&2
+            rm -rf "$canary"; exit 1
+          fi
+          rm -rf "$canary"
+          echo "scanner confirmed detecting"
+
           # History, not the working tree: every committed file is in here, and
-          # the tree in CI also holds node_modules. Verified against this repo
-          # before pushing - 4 commits scanned, exit 0.
+          # the tree in CI also holds node_modules. Findings reviewed and
+          # dismissed live in .gitleaksignore, one pinned fingerprint each.
           ./gitleaks git . --redact --no-banner --exit-code 1
 
       # Audits the dependencies this project declares, read straight from

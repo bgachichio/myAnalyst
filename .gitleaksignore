@@ -1,0 +1,16 @@
+# Findings reviewed and dismissed, one fingerprint per line:
+#   commit:file:rule:line
+#
+# An entry here is a claim that a human looked at the match and it is not a
+# credential. Keep each one narrow - it is pinned to a single commit, file and
+# line, so a real secret on the next line still fails the gate.
+
+# `curl ... -u "brian:${MYANALYST_PASSWORD:-}"` in the deploy script's verify
+# step. The match is a shell variable reference, not a value: no password has
+# ever been committed to this repository, and `git log -S MYANALYST_PASSWORD`
+# over the whole history returns only this line, the Caddyfile's
+# `{$MYANALYST_PASSWORD_HASH}` placeholder and the .env.example placeholder.
+# The line no longer exists at HEAD - it now passes the credential on stdin
+# via `curl --config -` - but history is immutable and the scan reads all of
+# it, so the finding is retired here rather than by rewriting a pushed branch.
+e85dc5d3e087826571176c276289cb5d15e7a180:deploy-app.sh:curl-auth-user:40
