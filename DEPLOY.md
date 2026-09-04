@@ -57,7 +57,14 @@ collector to the Lenovo, or paying for an e2-small. Record the reading here:
 
 | Date | Available RAM | Free disk | Decision |
 |---|---|---|---|
-| _not yet taken_ | | | |
+| 2026-09-03 | 485 MB of 969 MB | 17 GB of 30 GB | **Proceed.** A 32 MB spike is 6.6% of available. |
+
+**Noted at the same time: 309 MB of swap already in use.** Not a blocker, but it
+means the box has been under memory pressure before now. `building` §3 rule 3 is
+that swap is not headroom, so if a future reading shows available RAM falling
+toward 150 MB, the answer is to move the collector to the Lenovo or move the box
+to an e2-small - not to lean further on swap. `OOMScoreAdjust=800` means the
+collector is what the kernel takes first if it ever comes to that.
 
 ## 3. SECRETS
 

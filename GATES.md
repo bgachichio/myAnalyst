@@ -13,7 +13,7 @@ not a claim.
 | 0 | Preflight before any code | PASS | Both blocks printed before the PWA was scaffolded |
 | 1 | Selection law, all five | PASS | Every dependency OSI-licensed, free at this volume, small, runs offline, replaceable |
 | 2 | Canonical stack | PASS with one deviation | React + Vite + Tailwind v4 + lucide + recharts + vite-plugin-pwa; Python 3.12; Data at **rung 0**: plain JSON, no engine. DuckDB was dropped as over-specified for 65 counters. **Deviation: `pip`, not `uv`.** No `uv` in this environment; the pinned manifest gives the same determinism |
-| 3 | Memory law | **FAIL — one precondition cannot be met here** | Peak measured at **32 MB** and 986 KB on disk, against a store of 26,001 closes. It was 132 MB on DuckDB: plain JSON is the right rung for this much data and costs four times less memory and three times less disk. Limits set from the measurement. But §3 rule 2 requires `free -m` on the VM before adding a workload, and this session has no route to it. Recorded in DEPLOY.md §2 as a blocking pre-deploy check |
+| 3 | Memory law | **PASS** | Peak measured at **32 MB** and 986 KB on disk, against a store of 26,001 closes. It was 132 MB on DuckDB: plain JSON is the right rung for this much data and costs four times less memory and three times less disk. Rule 2 satisfied on 3 September: the VM reports **485 MB available of 969 MB** and 17 GB of 30 GB free, so a 32 MB spike takes 6.6% of headroom. Recorded in DEPLOY.md §2, together with the 309 MB of swap already in use |
 | 5 | Local-first default shape | PASS | The PWA holds the kernel and runs offline with no back end. The only server is the collector, and only because a browser cannot fetch either source cross-origin |
 | 6 | The four defaults | PASS | Verified in a browser: both toggles apply live, persist, survive reload, no flash |
 | 7 | Standard project | PASS with one stated omission | README, DEPLOY.md, .env.example, .pre-commit-config.yaml, src/, gate.yml all present. **No `compose.yaml`**: there is no stack to stand up. The app is `npm run dev` and the collector is a CLI against a local file. A compose file here would be scaffolding, and the Load-Bearing test deletes it |
@@ -48,13 +48,14 @@ at all.
 
 ## What is still not true
 
-Three things, none of which a document can fix:
+Three things, none of which a document can fix, and all three now close on the
+box rather than here:
 
-1. **No adapter has ever made a live call.** Three tests stay skipped until a
-   saved NSE page, a real price-list workbook and the CBK home page are dropped
-   into `collector/fixtures/`.
-2. **The rollback has never been run.**
+1. **No adapter has ever made a live call.** Nothing in this session had a route
+   to nse.co.ke or centralbank.go.ke. The first `deploy.sh` run answers it.
+2. **The rollback has never been run.** One command, immediately after the first
+   deploy, then write the date into DEPLOY.md §8.
 3. **The alert has never been delivered, and no restore drill has been held.**
+   `--test-alert` closes the first.
 
-The first is the blocker. The other two are single commands on the box, and
-DEPLOY.md names both.
+Every gate a machine here could settle is settled. These three need the VM.
