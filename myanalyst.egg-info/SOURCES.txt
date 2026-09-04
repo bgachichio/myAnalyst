@@ -2,6 +2,7 @@ LICENCE-NOTES.md
 README.md
 pyproject.toml
 collector/__init__.py
+collector/alert.py
 collector/cbk.py
 collector/nse.py
 collector/registry.py
@@ -18,6 +19,7 @@ myanalyst.egg-info/dependency_links.txt
 myanalyst.egg-info/entry_points.txt
 myanalyst.egg-info/requires.txt
 myanalyst.egg-info/top_level.txt
+tests/test_alert.py
 tests/test_cbk_adapter.py
 tests/test_kernel.py
 tests/test_nse_adapter.py

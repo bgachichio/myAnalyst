@@ -3,7 +3,10 @@ name = "myanalyst"
 version = "0.1.0"
 description = "NSE equity valuation kernel and end-of-day price collector"
 requires-python = ">=3.11"
-dependencies = ["duckdb>=1.1", "httpx>=0.27", "openpyxl>=3.1"]
+# Pinned, not floored. This is a deployed application, not a library: a floor
+# means the VM can install a version nobody tested, and developer.md G3 treats
+# an unpinned dependency as an auto-fail.
+dependencies = ["duckdb==1.5.5", "httpx==0.28.1", "openpyxl==3.1.5"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -15,7 +18,7 @@ build-backend = "setuptools.build_meta"
 packages = ["kernel", "collector"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest==9.1.1"]
 
 [project.scripts]
 myanalyst-collect = "collector.run:main"

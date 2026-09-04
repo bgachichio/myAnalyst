@@ -1,0 +1,32 @@
+# building §7. Catch it before it exists, not in review.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: detect-private-key
+      # The store and the emitted JSON are private-use NSE data. They live
+      # outside the repository and must never arrive in it by accident.
+      - id: no-commit-to-branch
+        args: ["--branch", "main"]
+        stages: [pre-commit]
+
+  - repo: local
+    hooks:
+      - id: kernel-fixtures
+        name: kernel reproduces the 2016 workbooks
+        entry: python -m pytest -q tests/test_kernel.py
+        language: system
+        pass_filenames: false
+        files: ^(kernel/|src/lib/|fixtures/)
