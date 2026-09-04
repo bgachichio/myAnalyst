@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 # Pinned, not floored. This is a deployed application, not a library: a floor
 # means the VM can install a version nobody tested, and developer.md G3 treats
 # an unpinned dependency as an auto-fail.
-dependencies = ["duckdb==1.5.5", "httpx==0.28.1", "openpyxl==3.1.5"]
+dependencies = ["httpx==0.28.1", "openpyxl==3.1.5"]
 
 [build-system]
 requires = ["setuptools>=68"]

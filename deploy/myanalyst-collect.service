@@ -57,16 +57,15 @@ IPAddressDeny=link-local multicast
 # place in every queue. On a 1 GB box the kernel must kill this before it kills
 # a web service.
 #
-# Measured, not guessed: one realistic daily run - parse a 65-counter workbook,
-# upsert, record the key rates, prune and emit - against a store holding 26,001
-# closes peaks at 132 MB RSS. MemoryHigh sat at 128M, below that, so it would
-# have throttled every single run; a limit that always engages tells you
-# nothing. 192M leaves headroom above the peak and still engages on real growth.
+# Measured, not guessed: one daily run - scrape the page, parse 65 counters,
+# append, record the key rates, prune and emit, against a store holding 26,001
+# closes - peaks at 32 MB RSS and 986 KB on disk. It was 132 MB on DuckDB;
+# plain JSON is the right rung for this much data and cost four times less.
 #
 # This is a oneshot, not a resident service: it adds no standing memory to the
-# box, only a ~10-second spike once a weekday.
-MemoryHigh=192M
-MemoryMax=256M
+# box, only a few seconds' spike, six days a week.
+MemoryHigh=64M
+MemoryMax=128M
 CPUQuota=40%
 CPUWeight=20
 IOWeight=20

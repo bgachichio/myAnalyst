@@ -20,7 +20,7 @@ def _series(store: PriceStore, ticker: str, days: int, start: dt.date) -> None:
 
 @pytest.fixture()
 def store(tmp_path):
-    with PriceStore(tmp_path / "prices.duckdb") as s:
+    with PriceStore(tmp_path / "store") as s:
         yield s
 
 
@@ -36,20 +36,22 @@ def test_prune_is_per_counter_not_global(store):
     _series(store, "UNGA", 500, dt.date(2023, 1, 2))
     _series(store, "LBTY", 50, dt.date(2024, 1, 1))
     store.prune(window_days=400)
-    counts = dict(store.db.execute("SELECT ticker, count(*) FROM daily_prices GROUP BY ticker").fetchall())
-    assert counts == {"UNGA": 400, "LBTY": 50}, "a thinly traded counter must not lose its history"
+    import json as _json
+    window = {t: len(_json.loads((store.daily / f"{t}.json").read_text())) for t in ("UNGA", "LBTY")}
+    assert window["UNGA"] == 400, "the busy counter is trimmed to the window"
+    assert window["LBTY"] == 50, "a thinly traded counter must not lose its history"
+    assert len(store.series("UNGA")) > 400, "and the archive reaches back beyond it"
 
 
 def test_month_ends_survive_the_prune(store):
     _series(store, "UNGA", 500, dt.date(2023, 1, 2))
-    early = store.db.execute("SELECT min(trade_date) FROM daily_prices").fetchone()[0]
+    import json
+    early = json.loads((store.daily / "UNGA.json").read_text())[0]["d"]
     store.prune(window_days=400)
-    kept_from = store.db.execute("SELECT min(trade_date) FROM daily_prices").fetchone()[0]
-    archived = store.db.execute(
-        "SELECT count(*) FROM monthly_prices WHERE ticker = 'UNGA' AND month_end < ?", [kept_from]
-    ).fetchone()[0]
+    kept_from = json.loads((store.daily / "UNGA.json").read_text())[0]["d"]
+    archived = [r for r in json.loads((store.monthly / "UNGA.json").read_text()) if r["d"] < kept_from]
     assert kept_from > early, "the window really did move"
-    assert archived > 0, "pruned months must remain reachable as month-ends"
+    assert archived, "pruned months must remain reachable as month-ends"
 
 
 def test_prune_is_idempotent(store):
@@ -97,8 +99,8 @@ def test_rewriting_a_day_replaces_it(store):
     day = dt.date(2026, 9, 2)
     store.upsert([Quote("UNGA", day, 28.0, 100, "test")])
     store.upsert([Quote("UNGA", day, 29.5, 120, "test")])
-    rows = store.db.execute("SELECT close FROM daily_prices WHERE ticker='UNGA'").fetchall()
-    assert rows == [(29.5,)], "a corrected price list must overwrite, not duplicate"
+    rows = store.series("UNGA")
+    assert [r["close"] for r in rows] == [29.5], "a corrected price list must overwrite, not duplicate"
 
 
 def test_emit_writes_what_the_app_reads(store, tmp_path):

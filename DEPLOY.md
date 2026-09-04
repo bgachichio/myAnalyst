@@ -2,10 +2,17 @@
 
 ## 1. WHAT THIS IS
 
-A once-a-weekday job on the VM that downloads the NSE daily equity price list
-and the CBK key rates, stores them, prunes old rows, and writes the JSON the app
-reads. **If it stops, every valuation falls back to a hand-typed price.** The
-tool still works; it just stops knowing today's number by itself.
+A job that runs six mornings a week on the VM, Monday to Saturday. It scrapes
+the day's closes off the NSE market statistics page and the key rates off the
+CBK home page, stores them as JSON, prunes what has aged out, and writes the
+index the app reads. **Nobody downloads or uploads anything: it is unattended.**
+
+If it stops, every valuation falls back to a hand-typed price. The tool still
+works; it just stops knowing today's number by itself.
+
+**What stays manual, by design:** the documents you bring to a question — an
+information memorandum, a deal sheet, an annual report — and the price of a
+private or unlisted company, which no exchange publishes.
 
 The PWA is the shell you open: it holds the valuation kernel and runs entirely
 in the browser, offline. It is deployed separately, to Vercel, because it is
@@ -34,18 +41,18 @@ sudo chown -R myanalyst:myanalyst /opt/myanalyst /var/lib/myanalyst /srv/myanaly
 **Never run `pip install` from source or `npm install` on the VM.** 1 GB of RAM
 will OOM. The wheel is built on the Lenovo and shipped.
 
-**Count before you add — `building` §3, rule 2.** The collector peaks at **132 MB
-RSS** on a realistic daily run, measured against a store holding 26,001 closes.
-It is a oneshot, so it adds no standing memory: the box carries a ten-second
-spike once a weekday, not a sixth resident service. Check there is room for that
+**Count before you add — `building` §3, rule 2.** The collector peaks at **32 MB
+RSS** and **986 KB on disk**, measured against a store holding 26,001 closes.
+It is a oneshot, so it adds no standing memory: the box carries a few seconds'
+spike six days a week, not a sixth resident service. Check there is room for that
 spike before the first deploy, and after anything else joins the box:
 
 ```sh
 ssh pulse 'free -m; df -h /'
 ```
 
-**Proceed only if `available` is at least 300 MB and the root filesystem has at
-least 1 GB free.** Below that, the answer is not swap: it is moving the
+**Proceed only if `available` is at least 150 MB and the root filesystem has at
+least 500 MB free.** Below that, the answer is not swap: it is moving the
 collector to the Lenovo, or paying for an e2-small. Record the reading here:
 
 | Date | Available RAM | Free disk | Decision |
@@ -101,10 +108,12 @@ myanalyst-collect --db ./prices.duckdb --out ./private --date 2026-09-02
 myanalyst-collect --db ./prices.duckdb --health
 ```
 
-The three skips are the live-source tests. They stay skipped until a saved copy
-of the NSE market statistics page, a real price-list workbook, and the CBK home
-page are dropped into `collector/fixtures/`. **Do that before the first real
-run**: it is the only proof the parsers match the live pages.
+The three skips are optional live-source tests. The parsers are covered by
+tests built from the real page's structure; these extra ones only run if you
+drop a saved copy of the NSE market statistics page, a price-list workbook, or
+the CBK home page into `collector/fixtures/`. Worth doing once, to prove the
+parsers against the real markup rather than a model of it. **Not required to
+operate:** the collector scrapes unattended either way.
 
 ## 5. BUILD
 
@@ -152,9 +161,9 @@ unit and timer; swaps the `current` symlink atomically with `mv -Tf`; enables th
 timer; runs the health check; **rolls back automatically if the health check
 fails**; and keeps the last three releases.
 
-The timer fires Monday to Friday at 15:00 UTC, which is 18:00 in Nairobi, after
-the close and after the price list is published, with up to ten minutes of
-random delay so the NSE is not hit by a clock.
+The timer fires Monday to Saturday at 15:00 UTC, which is 18:00 in Nairobi,
+after the close and after the day's figures are published, with up to ten
+minutes of random delay so the NSE is not hit by a clock. Sunday is skipped.
 
 ## 6a. ISOLATION - WHAT THIS SHARES WITH THE WEBSITE AND KENYA PULSE
 
@@ -267,4 +276,4 @@ condition.
 | CBK layout changed | `rates-failed`, prices still stored | Same, in `collector/cbk.py`. Prices are deliberately not lost to a rates failure. |
 | Health fails on a Monday | `newest close is 5 days old` | A Friday public holiday plus a weekend crosses the four-day limit. Confirm with `journalctl`, then raise `--stale-after` for that week rather than silencing the check. |
 | A bad day was stored | Wrong prices for one date | `duckdb /var/lib/myanalyst/prices.duckdb "DELETE FROM daily_prices WHERE trade_date = DATE '<date>'"` then re-run with `--date <date>`. |
-| Disk filling | The VM is at 1 GB | It should not: twenty years of everything is about 2 MB. If it is, `myanalyst-collect --prune-only` and read the line it prints. Something is writing outside the retention rule. |
+| Disk filling | The VM is at 1 GB | It should not: the whole store is about 1 MB. If it is, `myanalyst-collect --prune-only` and read the line it prints. Something is writing outside the retention rule. |

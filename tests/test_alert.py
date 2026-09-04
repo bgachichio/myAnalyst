@@ -62,13 +62,14 @@ def test_a_parse_failure_alerts_and_stores_nothing(monkeypatch, tmp_path):
     from collector.nse import ParseFailed
     from collector.store import PriceStore
 
-    monkeypatch.setattr(run_module, "fetch_latest", lambda *_a, **_k: (_ for _ in ()).throw(ParseFailed("layout changed")))
+    monkeypatch.setattr(run_module, "fetch_latest",
+                        lambda *_a, **_k: (_ for _ in ()).throw(ParseFailed("layout changed")))
     fired: list[str] = []
     monkeypatch.setattr(run_module.alert, "send", lambda text: fired.append(text) or True)
 
-    with PriceStore(tmp_path / "p.duckdb") as store:
+    with PriceStore(tmp_path / "store") as store:
         code = run_module.collect(store, dt.date(2026, 9, 3), window=400, out_dir=None)
         assert code == 3
-        assert store.db.execute("SELECT count(*) FROM daily_prices").fetchone()[0] == 0
+        assert store.latest() == []
 
     assert fired and "layout" in fired[0]

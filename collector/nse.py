@@ -28,6 +28,7 @@ from dataclasses import dataclass
 import httpx
 import openpyxl
 
+from .htmltable import tables as html_tables
 from .store import Quote
 
 SOURCE = "nse.co.ke/dataservices/market-statistics"
@@ -52,6 +53,9 @@ MONTHS = {m: i for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
 CLOSE_HEADERS = ("day price", "closing price", "close", "price", "last price", "todays price")
 VOLUME_HEADERS = ("volume", "shares traded", "traded volume", "no of shares")
+#: Words that carry no identity: every counter on the list has them.
+NAME_NOISE = frozenset({"LTD", "LIMITED", "PLC", "ORD", "CO", "COMPANY", "GROUP",
+                        "HOLDINGS", "KENYA", "THE", "AND"})
 
 
 class SourceRefused(RuntimeError):
@@ -160,12 +164,76 @@ def _identify(row: tuple, columns: dict[str, int]) -> tuple[str, str | None]:
         if re.fullmatch(r"[A-Z][A-Z0-9.\-]{1,11}", ticker):
             return ticker, isin
     if "name" in columns:
-        # "Williamson Tea Kenya Ltd Ord 5.00" -> WILLIAMSON. Deterministic, and
-        # the ISIN remains the identifier that actually matters.
-        words = re.findall(r"[A-Za-z]+", str(row[columns["name"]] or ""))
+        # "Williamson Tea Kenya Ltd Ord 5.00" -> WILLIAMSONTEA. Two words, not
+        # one: a single word collides across a real board ("Standard Chartered"
+        # against "Standard Group"), and a collision silently drops a counter.
+        # The ISIN remains the identifier that actually matters.
+        all_words = re.findall(r"[A-Za-z]+", str(row[columns["name"]] or ""))
+        words = [w for w in all_words if w.upper() not in NAME_NOISE] or all_words
         if words:
-            return words[0].upper()[:12], isin
+            return "".join(words[:2]).upper()[:12], isin
     return "", isin
+
+
+def _columns(header: list[str]) -> dict[str, int]:
+    """Map the columns we need onto their positions, by header name."""
+    cells = [_normalise(c) for c in header]
+    found: dict[str, int] = {}
+    for key, options in (
+        ("ticker", TICKER_HEADERS), ("isin", ISIN_HEADERS), ("sector", SECTOR_HEADERS),
+        ("name", NAME_HEADERS), ("close", CLOSE_HEADERS), ("volume", VOLUME_HEADERS),
+    ):
+        for position, cell in enumerate(cells):
+            if cell and any(cell == option or cell.startswith(option) for option in options):
+                found.setdefault(key, position)
+                break
+    return found
+
+
+def parse_page_tables(html: str, trade_date: dt.date, sector: str | None = None) -> list[Quote]:
+    """Read the price table straight off the page.
+
+    The page renders the day's closes inline, grouped by sector, so this is the
+    primary path: it needs no download link to exist and no spreadsheet to
+    parse. Every table on the page is considered and the ones that do not carry
+    a security identifier and a price are ignored.
+    """
+    quotes: list[Quote] = []
+    seen: set[str] = set()
+
+    for table in html_tables(html):
+        if len(table) < 2:
+            continue
+        columns = _columns(table[0])
+        if not (("ticker" in columns or "isin" in columns or "name" in columns) and "close" in columns):
+            continue
+
+        for row in table[1:]:
+            if len(row) <= max(columns.values()):
+                continue
+            ticker, isin = _identify(tuple(row), columns)
+            key = isin or ticker
+            if not ticker or key in seen:
+                continue
+            try:
+                close = float(str(row[columns["close"]]).replace(",", "").strip())
+            except (TypeError, ValueError):
+                continue          # a suspended counter prints a dash
+            if close <= 0:
+                continue
+            volume = None
+            if "volume" in columns:
+                try:
+                    volume = int(float(str(row[columns["volume"]]).replace(",", "").strip()))
+                except (TypeError, ValueError):
+                    volume = None
+            row_sector = sector
+            if "sector" in columns and row[columns["sector"]]:
+                row_sector = row[columns["sector"]].strip().upper()
+            quotes.append(Quote(ticker, trade_date, close, volume, SOURCE, isin=isin, sector=row_sector))
+            seen.add(key)
+
+    return quotes
 
 
 def parse_workbook(data: bytes, trade_date: dt.date, sector: str | None = None) -> list[Quote]:
@@ -173,6 +241,7 @@ def parse_workbook(data: bytes, trade_date: dt.date, sector: str | None = None) 
     book = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
     rows = [tuple(r) for r in book[book.sheetnames[0]].iter_rows(values_only=True)]
     start, columns = _header_row(rows)
+    book.close()
 
     quotes: list[Quote] = []
     for row in rows[start + 1:]:
@@ -202,8 +271,21 @@ def parse_workbook(data: bytes, trade_date: dt.date, sector: str | None = None) 
     return quotes
 
 
-def fetch_latest(trade_date: dt.date, *, client: httpx.Client | None = None) -> list[Quote]:
-    """Fetch and parse the newest price list. Raises rather than returning partial data."""
+#: Below this, the day is partial and must not be stored. The NSE lists well
+#: over forty counters; a handful means the scrape caught a fragment.
+MINIMUM_COUNTERS = 20
+
+
+def fetch_latest(
+    trade_date: dt.date, *, client: httpx.Client | None = None
+) -> tuple[list[Quote], dt.date, str]:
+    """Scrape the day's closes. Returns (quotes, trade date, which path worked).
+
+    The page is read first, because the table is rendered inline and needs no
+    download link to exist. The linked workbook is the fallback for the day the
+    markup changes. Raises rather than returning a partial day: half a price
+    list stored is worse than none, because nothing downstream can tell.
+    """
     owned = client is None
     client = client or make_client()
     try:
@@ -211,20 +293,31 @@ def fetch_latest(trade_date: dt.date, *, client: httpx.Client | None = None) -> 
             raise SourceRefused(f"robots.txt disallows {PAGE}")
         page = client.get(PAGE)
         page.raise_for_status()
+
         stated = as_of_date(page.text)
         if stated:
-            trade_date = stated
+            trade_date = stated       # the date the page states for itself
+
+        quotes = parse_page_tables(page.text, trade_date)
+        if len(quotes) >= MINIMUM_COUNTERS:
+            return quotes, trade_date, "page"
+
+        # Fallback: the page's own "Download Daily Equity Price List".
         files = discover_price_files(page.text)
         if not files:
-            raise ParseFailed("no price-list workbook linked from the market statistics page")
-        # Prefer the page's own "Download Daily Equity Price List" over any
-        # other spreadsheet that happens to be linked.
+            raise ParseFailed(
+                f"the page yielded {len(quotes)} counters and links no price-list workbook; "
+                "the markup has changed"
+            )
         newest = next((f for f in files if f.is_the_official_download), files[0])
         if not robots_allows(newest.url, client=client):
             raise SourceRefused(f"robots.txt disallows {newest.url}")
         workbook = client.get(newest.url)
         workbook.raise_for_status()
-        return parse_workbook(workbook.content, trade_date)
+        from_file = parse_workbook(workbook.content, trade_date)
+        if len(from_file) < MINIMUM_COUNTERS:
+            raise ParseFailed(f"only {len(from_file)} counters from the workbook; refusing a partial day")
+        return from_file, trade_date, "workbook"
     finally:
         if owned:
             client.close()

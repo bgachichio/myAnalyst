@@ -157,3 +157,97 @@ def test_a_malformed_isin_is_dropped_not_stored():
     quotes = parse_workbook(_workbook(["Company", "ISIN Code", "Volume", "Price"], rows), DAY)
     assert len(quotes) == 20
     assert all(q.isin is None for q in quotes), "a bad ISIN is discarded, never persisted"
+
+
+# --- scraping the page itself, the primary path ---------------------------
+# Markup modelled on the live page: a sector heading, the stated date, and a
+# table keyed by Company and ISIN Code, exactly as it renders on 2 Sep 2026.
+
+PAGE_HTML = """
+<div class="tabs">Market Statistics Summary | Equity Statistics | Bonds Statistics</div>
+<select><option>AGRICULTURAL</option><option>BANKING</option></select>
+<p>Statistics as of 02-Sep-2026</p>
+<a href="/wp-content/uploads/Daily-Equity-Price-List-02-09-2026.xlsx">Download Daily Equity Price List</a>
+<table>
+  <thead><tr><th>Company</th><th>ISIN Code</th><th>Volume</th><th>Day Price</th></tr></thead>
+  <tbody>
+    <tr><td>Kakuzi Ord.5.00</td><td>KE0000000281</td><td>756</td><td>400.00</td></tr>
+    <tr><td>Sasini Ltd Ord 1.00</td><td>KE0000000430</td><td>10,845</td><td>22.50</td></tr>
+    <tr><td>Eaagads Ltd Ord 1.25</td><td>KE0000000208</td><td>756</td><td>12.00</td></tr>
+    <tr><td>Williamson Tea Kenya Ltd Ord 5.00</td><td>KE0000000505</td><td>8,484</td><td>145.00</td></tr>
+    <tr><td>Kapchorua Tea Co. Ltd Ord Ord 5.00</td><td>KE4000001760</td><td>2,556</td><td>90.00</td></tr>
+    <tr><td>Limuru Tea Co. Ltd Ord 20.00</td><td>KE0000000356</td><td>21</td><td>320.00</td></tr>
+    <tr><td>Suspended Counter Ltd</td><td>KE0000000999</td><td>-</td><td>-</td></tr>
+  </tbody>
+</table>
+<table><tr><th>Notice</th></tr><tr><td>Trading hours 09:00 to 15:00</td></tr></table>
+"""
+
+
+def test_scrapes_the_price_table_off_the_page():
+    from collector.nse import parse_page_tables
+
+    quotes = parse_page_tables(PAGE_HTML, DAY, sector="AGRICULTURAL")
+    assert len(quotes) == 6, "six priced counters; the suspended one is skipped"
+
+    kakuzi = quotes[0]
+    assert kakuzi.ticker == "KAKUZI"
+    assert kakuzi.isin == "KE0000000281"
+    assert kakuzi.close == 400.0
+    assert kakuzi.volume == 756
+    assert kakuzi.sector == "AGRICULTURAL"
+
+    sasini = next(q for q in quotes if q.ticker == "SASINI")
+    assert sasini.volume == 10845, "thousands separators must not defeat the parse"
+
+
+def test_a_table_that_is_not_a_price_list_is_ignored():
+    from collector.nse import parse_page_tables
+
+    quotes = parse_page_tables(PAGE_HTML, DAY)
+    assert all(q.ticker != "TRADING" for q in quotes)
+
+
+def test_a_page_with_no_price_table_yields_nothing_rather_than_guessing():
+    from collector.nse import parse_page_tables
+
+    assert parse_page_tables("<p>Welcome to the exchange.</p>", DAY) == []
+
+
+def test_the_same_counter_is_never_stored_twice():
+    from collector.nse import parse_page_tables
+
+    doubled = PAGE_HTML + PAGE_HTML
+    quotes = parse_page_tables(doubled, DAY)
+    assert len({q.ticker for q in quotes}) == len(quotes)
+
+
+def test_similar_company_names_do_not_collide_into_one_counter():
+    """A one-word ticker collides on a real board and silently drops a counter."""
+    from collector.nse import parse_page_tables
+
+    html = """
+    <table><tr><th>Company</th><th>ISIN Code</th><th>Volume</th><th>Day Price</th></tr>
+      <tr><td>Standard Chartered Bank Kenya Ltd</td><td>KE0000000101</td><td>100</td><td>150.00</td></tr>
+      <tr><td>Standard Group Ltd</td><td>KE0000000102</td><td>200</td><td>8.00</td></tr>
+      <tr><td>Kenya Power Ltd</td><td>KE0000000103</td><td>300</td><td>2.00</td></tr>
+      <tr><td>Kenya Airways Ltd</td><td>KE0000000104</td><td>400</td><td>3.00</td></tr>
+    </table>"""
+    quotes = parse_page_tables(html, DAY)
+    assert len(quotes) == 4, "four distinct securities must survive as four"
+    assert len({q.isin for q in quotes}) == 4
+    assert len({q.ticker for q in quotes}) == 4, f"tickers collided: {[q.ticker for q in quotes]}"
+
+
+def test_a_name_made_only_of_common_words_still_yields_a_counter():
+    """A priced row with an ISIN is never dropped for want of a tidy ticker."""
+    from collector.nse import parse_page_tables
+
+    html = """
+    <table><tr><th>Company</th><th>ISIN Code</th><th>Volume</th><th>Day Price</th></tr>
+      <tr><td>The Company Group Ltd</td><td>KE0000000201</td><td>10</td><td>5.00</td></tr>
+    </table>"""
+    quotes = parse_page_tables(html, DAY)
+    assert len(quotes) == 1
+    assert quotes[0].ticker, "a ticker was derived rather than the row being skipped"
+    assert quotes[0].isin == "KE0000000201"

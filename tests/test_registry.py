@@ -11,7 +11,7 @@ from collector.store import Observation, PriceStore
 
 @pytest.fixture()
 def store(tmp_path):
-    with PriceStore(tmp_path / "prices.duckdb") as s:
+    with PriceStore(tmp_path / "store") as s:
         yield s
 
 
@@ -72,9 +72,7 @@ def test_slow_series_are_kept_entire_and_daily_series_are_windowed(store):
 
     report = store.prune()
 
-    held = dict(store.db.execute(
-        "SELECT series_id, count(*) FROM series_observations GROUP BY series_id"
-    ).fetchall())
+    held = {k: len(v) for k, v in store.observations().items()}
     assert held["nse.nasi"] == BY_ID["nse.nasi"].retention_days
     assert held["ke.gdp.growth"] == 24, "an annual series must never be pruned"
     assert report.series_rows_deleted == 100

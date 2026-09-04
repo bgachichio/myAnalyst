@@ -19,20 +19,22 @@ from .store import DAILY_WINDOW_DAYS, PriceStore
 
 log = logging.getLogger("collector")
 
-#: The NSE trades Monday to Friday. Kenyan public holidays are not encoded here:
-#: a holiday simply yields no new price list, which the run reports as "no data"
-#: rather than treating as a failure.
-TRADING_WEEKDAYS = frozenset({0, 1, 2, 3, 4})
+#: Collect Monday to Saturday, skip Sunday. The exchange trades Monday to
+#: Friday, but the Saturday run is cheap insurance: it picks up a Friday list
+#: published late without waiting until Monday. A day with nothing new to
+#: collect is reported as skipped, not as a failure. Kenyan public holidays are
+#: not encoded: a holiday simply yields no new list.
+COLLECTION_DAYS = frozenset({0, 1, 2, 3, 4, 5})   # Mon-Sat
 
 
 def collect(store: PriceStore, trade_date: dt.date, *, window: int, out_dir: Path | None) -> int:
-    if trade_date.weekday() not in TRADING_WEEKDAYS:
-        log.info("%s is not a trading day; nothing to collect", trade_date)
-        store.log(trade_date, 0, "skipped", "not a trading day")
+    if trade_date.weekday() not in COLLECTION_DAYS:
+        log.info("%s is a Sunday; nothing to collect", trade_date)
+        store.log(trade_date, 0, "skipped", "Sunday")
         return 0
 
     try:
-        quotes = fetch_latest(trade_date)
+        quotes, trade_date, path = fetch_latest(trade_date)
     except SourceRefused as exc:
         log.error("source refused: %s", exc)
         store.log(trade_date, 0, "refused", str(exc))
@@ -53,8 +55,8 @@ def collect(store: PriceStore, trade_date: dt.date, *, window: int, out_dir: Pat
         return 4
 
     written = store.upsert(quotes)
-    store.log(trade_date, written, "ok")
-    log.info("stored %d closes for %s", written, trade_date)
+    store.log(trade_date, written, "ok", f"via {path}")
+    log.info("stored %d closes for %s, scraped from the %s", written, trade_date, path)
 
     # The key rates are a separate source with a separate failure mode. A CBK
     # outage must not discard a good day of prices, so it is caught on its own.
@@ -84,15 +86,11 @@ def health(store: PriceStore, *, stale_after: int = 4) -> int:
     Success is not "the process ran". It is "a good day of prices landed
     recently", which is the only thing the app actually depends on.
     """
-    last = store.db.execute(
-        "SELECT max(trade_date) FROM daily_prices"
-    ).fetchone()[0]
-    counters = store.db.execute("SELECT count(DISTINCT ticker) FROM daily_prices").fetchone()[0]
-    rates = store.db.execute("SELECT count(*) FROM series_observations").fetchone()[0]
-    failures = store.db.execute(
-        "SELECT count(*) FROM collection_log WHERE outcome NOT IN ('ok', 'skipped') "
-        "AND run_at > now() - INTERVAL 7 DAY"
-    ).fetchone()[0]
+    latest = store.latest()
+    counters = len(latest)
+    rates = sum(len(v) for v in store.observations().values())
+    failures = store.recent_failures(days=7)
+    last = max((dt.date.fromisoformat(r["trade_date"]) for r in latest), default=None)
 
     if last is None:
         log.error("HEALTH FAIL: the store holds no prices at all")

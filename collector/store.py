@@ -1,71 +1,74 @@
-"""End-of-day price store with tiered retention.
+"""End-of-day store, as plain JSON on disk.
 
-The app needs very little price history. The kernel needs one price: the current
-one. The mandatory charts are drawn from reported financials, not from ticks.
-Everything beyond a rolling window is kept only so a 52-week range and a
-one-year return can be computed, and month-ends are kept because they cost
-almost nothing and answer "what was this worth in March 2019".
+Rung 0 of the data ladder (`building` §2.3). Sixty-five counters and a rolling
+window is not a database problem: it is a few megabytes of text. Plain JSON
+means no engine to install, no file format to migrate, no process holding a
+hundred megabytes to write a hundred rows, and a store the app can read
+directly.
 
-So: full daily for a rolling window, month-end closes for ever, and a prune that
-runs on a schedule and reports what it removed.
+Shape on disk:
+
+    <data>/prices/daily/<TICKER>.json     rolling window, oldest first
+    <data>/prices/monthly/<TICKER>.json   month-end closes, kept for ever
+    <data>/series/<series_id>.json        key rates and indices
+    <data>/index.json                     what the app reads first
+    <data>/log.jsonl                      collection outcomes, capped
+
+One file per counter is deliberate: a prune or an append touches one small file,
+so memory never scales with the size of the store.
 """
 from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-import duckdb
-
-from .registry import BY_ID, Cadence, Series
+from .registry import BY_ID
 
 #: Trading days of full daily history kept per counter. About eighteen months,
-#: which covers a 52-week range and a one-year return with headroom to spare.
+#: which covers a 52-week range and a one-year return with headroom.
 DAILY_WINDOW_DAYS = 400
 
-#: Refuse to write a day that claims more counters than the NSE could list.
-#: A parser that has started reading the wrong table trips this rather than
-#: quietly filling the store with rubbish.
+#: Refuse a day claiming more counters than the NSE could list. A parser that
+#: has started reading the wrong table trips this rather than filling the store.
 MAX_COUNTERS_PER_DAY = 200
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS daily_prices (
-    ticker      VARCHAR NOT NULL,
-    trade_date  DATE    NOT NULL,
-    close       DOUBLE  NOT NULL,
-    volume      BIGINT,
-    isin        VARCHAR,
-    sector      VARCHAR,
-    source      VARCHAR NOT NULL,
-    fetched_at  TIMESTAMP NOT NULL,
-    PRIMARY KEY (ticker, trade_date)
-);
-CREATE TABLE IF NOT EXISTS monthly_prices (
-    ticker      VARCHAR NOT NULL,
-    month_end   DATE    NOT NULL,
-    close       DOUBLE  NOT NULL,
-    source      VARCHAR NOT NULL,
-    PRIMARY KEY (ticker, month_end)
-);
-CREATE TABLE IF NOT EXISTS series_observations (
-    series_id   VARCHAR NOT NULL,
-    obs_date    DATE    NOT NULL,
-    value       DOUBLE  NOT NULL,
-    note        VARCHAR,
-    source      VARCHAR NOT NULL,
-    fetched_at  TIMESTAMP NOT NULL,
-    PRIMARY KEY (series_id, obs_date)
-);
-CREATE TABLE IF NOT EXISTS collection_log (
-    run_at      TIMESTAMP NOT NULL,
-    trade_date  DATE,
-    counters    INTEGER   NOT NULL,
-    outcome     VARCHAR   NOT NULL,
-    detail      VARCHAR
-);
-"""
+#: The log is a diary, not an archive.
+MAX_LOG_LINES = 500
+
+ISIN = re.compile(r"[A-Z]{2}[A-Z0-9]{9}\d")
+
+
+def _write_atomic(path: Path, payload: object) -> None:
+    """Write via a temporary file in the same directory, then rename.
+
+    A half-written store is worse than a missing one: the app would read it and
+    believe it.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(payload, fh, separators=(",", ":"))
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def _read(path: Path, fallback):
+    if not path.exists():
+        return fallback
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return fallback     # a corrupt file is replaced by the next good day
 
 
 @dataclass(frozen=True)
@@ -75,28 +78,22 @@ class Quote:
     close: float
     volume: int | None
     source: str
-    #: The stable identifier. Company names change and short codes are reused;
-    #: an ISIN is issued once. Kept alongside the ticker, never instead of it.
     isin: str | None = None
-    #: The NSE groups its price list by sector, and the sector decides which
-    #: fragility sheet the kernel runs. Carried from the source, not guessed.
     sector: str | None = None
 
     def __post_init__(self) -> None:
         if not self.ticker or len(self.ticker) > 12:
             raise ValueError(f"implausible ticker: {self.ticker!r}")
-        if self.isin is not None and not re.fullmatch(r"[A-Z]{2}[A-Z0-9]{9}\d", self.isin):
-            raise ValueError(f"{self.ticker}: {self.isin!r} is not a well-formed ISIN")
         if self.close <= 0:
             raise ValueError(f"{self.ticker}: close must be positive, got {self.close}")
         if self.trade_date > dt.date.today():
             raise ValueError(f"{self.ticker}: trade date is in the future")
+        if self.isin is not None and not ISIN.fullmatch(self.isin):
+            raise ValueError(f"{self.ticker}: {self.isin!r} is not a well-formed ISIN")
 
 
 @dataclass(frozen=True)
 class Observation:
-    """One value of one registered series: an index level, a yield, a growth rate."""
-
     series_id: str
     obs_date: dt.date
     value: float
@@ -122,21 +119,27 @@ class PruneReport:
 
     def line(self) -> str:
         return (
-            f"prune: {self.daily_rows_deleted} price rows and {self.series_rows_deleted} series rows removed, "
-            f"{self.daily_rows_after} closes kept, {self.monthly_rows} month-ends archived, "
+            f"prune: {self.daily_rows_deleted} price rows and {self.series_rows_deleted} series rows "
+            f"removed, {self.daily_rows_after} closes kept, {self.monthly_rows} month-ends archived, "
             f"{self.bytes_on_disk / 1024:.0f} KB on disk"
         )
 
 
 class PriceStore:
     def __init__(self, path: str | Path) -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = duckdb.connect(str(self.path))
-        self.db.execute(SCHEMA)
+        # `path` is a directory. A file path is accepted and its parent used, so
+        # an existing --db argument keeps working.
+        p = Path(path)
+        self.root = p.parent / p.stem if p.suffix else p
+        self.daily = self.root / "prices" / "daily"
+        self.monthly = self.root / "prices" / "monthly"
+        self.series_dir = self.root / "series"
+        for d in (self.daily, self.monthly, self.series_dir):
+            d.mkdir(parents=True, exist_ok=True)
 
-    def close(self) -> None:
-        self.db.close()
+    # ------------------------------------------------------------- lifecycle
+    def close(self) -> None:      # nothing to close; kept so callers need not care
+        pass
 
     def __enter__(self) -> "PriceStore":
         return self
@@ -144,10 +147,15 @@ class PriceStore:
     def __exit__(self, *_exc) -> None:
         self.close()
 
-    # ------------------------------------------------------------------ write
+    def _tickers(self) -> list[str]:
+        return sorted(p.stem for p in self.daily.glob("*.json"))
 
+    def _meta_path(self) -> Path:
+        return self.root / "counters.json"
+
+    # ----------------------------------------------------------------- write
     def upsert(self, quotes: list[Quote], fetched_at: dt.datetime | None = None) -> int:
-        """Insert or replace one day's quotes. Returns the row count written."""
+        """Insert or replace one day's quotes. Returns rows written."""
         if not quotes:
             return 0
         if len(quotes) > MAX_COUNTERS_PER_DAY:
@@ -155,163 +163,158 @@ class PriceStore:
                 f"{len(quotes)} counters in one day exceeds the {MAX_COUNTERS_PER_DAY} ceiling; "
                 "the parser is probably reading the wrong table"
             )
-        stamp = fetched_at or dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
-        rows = [
-            (q.ticker, q.trade_date, q.close, q.volume, q.isin, q.sector, q.source, stamp)
-            for q in quotes
-        ]
-        self.db.executemany(
-            "INSERT OR REPLACE INTO daily_prices "
-            "(ticker, trade_date, close, volume, isin, sector, source, fetched_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            rows,
-        )
-        return len(rows)
+        stamp = (fetched_at or dt.datetime.now(dt.timezone.utc)).replace(tzinfo=None).isoformat(timespec="seconds")
+        meta = _read(self._meta_path(), {})
+
+        for q in quotes:
+            path = self.daily / f"{q.ticker}.json"
+            rows = _read(path, [])
+            day = q.trade_date.isoformat()
+            rows = [r for r in rows if r["d"] != day]       # a corrected list overwrites
+            rows.append({"d": day, "c": q.close, "v": q.volume})
+            rows.sort(key=lambda r: r["d"])
+            _write_atomic(path, rows)
+            meta[q.ticker] = {
+                "isin": q.isin, "sector": q.sector, "source": q.source, "fetched_at": stamp,
+            }
+
+        _write_atomic(self._meta_path(), meta)
+        return len(quotes)
 
     def record(self, observations: list[Observation], fetched_at: dt.datetime | None = None) -> int:
-        """Insert or replace observations of registered series."""
         if not observations:
             return 0
-        stamp = fetched_at or dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
-        rows = [
-            (o.series_id, o.obs_date, o.value, o.note, BY_ID[o.series_id].source, stamp)
-            for o in observations
-        ]
-        self.db.executemany(
-            "INSERT OR REPLACE INTO series_observations "
-            "(series_id, obs_date, value, note, source, fetched_at) VALUES (?, ?, ?, ?, ?, ?)",
-            rows,
-        )
-        return len(rows)
+        stamp = (fetched_at or dt.datetime.now(dt.timezone.utc)).replace(tzinfo=None).isoformat(timespec="seconds")
+        by_series: dict[str, list[Observation]] = {}
+        for o in observations:
+            by_series.setdefault(o.series_id, []).append(o)
+
+        for series_id, obs in by_series.items():
+            path = self.series_dir / f"{series_id}.json"
+            rows = _read(path, [])
+            days = {o.obs_date.isoformat() for o in obs}
+            rows = [r for r in rows if r["d"] not in days]
+            rows.extend({"d": o.obs_date.isoformat(), "v": o.value, "n": o.note,
+                         "src": BY_ID[o.series_id].source, "at": stamp} for o in obs)
+            rows.sort(key=lambda r: r["d"])
+            _write_atomic(path, rows)
+        return len(observations)
 
     def log(self, trade_date: dt.date | None, counters: int, outcome: str, detail: str = "") -> None:
-        self.db.execute(
-            "INSERT INTO collection_log (run_at, trade_date, counters, outcome, detail) VALUES (?, ?, ?, ?, ?)",
-            [dt.datetime.now(dt.timezone.utc).replace(tzinfo=None), trade_date, counters, outcome, detail],
-        )
+        path = self.root / "log.jsonl"
+        entry = {
+            "at": dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"),
+            "date": trade_date.isoformat() if trade_date else None,
+            "counters": counters, "outcome": outcome, "detail": detail[:400],
+        }
+        lines = path.read_text().splitlines() if path.exists() else []
+        lines.append(json.dumps(entry, separators=(",", ":")))
+        path.write_text("\n".join(lines[-MAX_LOG_LINES:]) + "\n")
 
-    # ------------------------------------------------------------------ prune
+    def recent_failures(self, days: int = 7) -> int:
+        path = self.root / "log.jsonl"
+        if not path.exists():
+            return 0
+        cutoff = (dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) - dt.timedelta(days=days)).isoformat()
+        n = 0
+        for line in path.read_text().splitlines():
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if e.get("at", "") >= cutoff and e.get("outcome") not in ("ok", "skipped"):
+                n += 1
+        return n
 
+    # ----------------------------------------------------------------- prune
     def prune(self, window_days: int = DAILY_WINDOW_DAYS) -> PruneReport:
         """Archive month-ends, then drop daily rows beyond the rolling window.
 
-        The window is counted in trading days actually held per counter, not in
-        calendar days, so a counter that was suspended for a month does not lose
-        its history to the calendar.
+        One counter at a time, so peak memory is one counter's history, not the
+        whole store. The window counts trading days actually held, so a counter
+        suspended for a month does not lose its history to the calendar.
         """
-        before = self.db.execute("SELECT count(*) FROM daily_prices").fetchone()[0]
+        before = after = monthly_total = 0
 
-        # Month-end closes are archived before anything is deleted, so pruning
-        # can never lose a month that was only ever held as a daily row.
-        self.db.execute(
-            """
-            INSERT OR REPLACE INTO monthly_prices (ticker, month_end, close, source)
-            SELECT ticker, trade_date, close, source
-            FROM (
-                SELECT ticker, trade_date, close, source,
-                       row_number() OVER (
-                           PARTITION BY ticker, date_trunc('month', trade_date)
-                           ORDER BY trade_date DESC
-                       ) AS rn
-                FROM daily_prices
-            )
-            WHERE rn = 1
-            """
-        )
+        for ticker in self._tickers():
+            daily_path = self.daily / f"{ticker}.json"
+            rows = _read(daily_path, [])
+            before += len(rows)
 
-        self.db.execute(
-            """
-            DELETE FROM daily_prices WHERE (ticker, trade_date) IN (
-                SELECT ticker, trade_date FROM (
-                    SELECT ticker, trade_date,
-                           row_number() OVER (PARTITION BY ticker ORDER BY trade_date DESC) AS rn
-                    FROM daily_prices
-                ) WHERE rn > ?
-            )
-            """,
-            [window_days],
-        )
+            # Month-ends are archived before anything is deleted, so a prune can
+            # never lose a month that existed only as daily rows.
+            monthly_path = self.monthly / f"{ticker}.json"
+            archive = {r["d"]: r["c"] for r in _read(monthly_path, [])}
+            last_of_month: dict[str, dict] = {}
+            for r in rows:
+                last_of_month[r["d"][:7]] = r
+            for r in last_of_month.values():
+                archive[r["d"]] = r["c"]
+            merged = [{"d": d, "c": c} for d, c in sorted(archive.items())]
+            _write_atomic(monthly_path, merged)
+            monthly_total += len(merged)
 
-        # Each registered series prunes to its own window. A series declaring
-        # retention_days = None arrives a few times a year and is kept entire.
-        series_before = self.db.execute("SELECT count(*) FROM series_observations").fetchone()[0]
-        for series in BY_ID.values():
-            if series.retention_days is None:
-                continue
-            self.db.execute(
-                """
-                DELETE FROM series_observations WHERE (series_id, obs_date) IN (
-                    SELECT series_id, obs_date FROM (
-                        SELECT series_id, obs_date,
-                               row_number() OVER (PARTITION BY series_id ORDER BY obs_date DESC) AS rn
-                        FROM series_observations WHERE series_id = ?
-                    ) WHERE rn > ?
-                )
-                """,
-                [series.series_id, series.retention_days],
-            )
-        series_after = self.db.execute("SELECT count(*) FROM series_observations").fetchone()[0]
+            kept = rows[-window_days:] if len(rows) > window_days else rows
+            if len(kept) != len(rows):
+                _write_atomic(daily_path, kept)
+            after += len(kept)
 
-        after = self.db.execute("SELECT count(*) FROM daily_prices").fetchone()[0]
-        monthly = self.db.execute("SELECT count(*) FROM monthly_prices").fetchone()[0]
-        self.db.execute("CHECKPOINT")
+        series_before = series_after = 0
+        for path in sorted(self.series_dir.glob("*.json")):
+            series = BY_ID.get(path.stem)
+            rows = _read(path, [])
+            series_before += len(rows)
+            if series and series.retention_days is not None and len(rows) > series.retention_days:
+                rows = rows[-series.retention_days:]
+                _write_atomic(path, rows)
+            series_after += len(rows)
 
         return PruneReport(
             daily_rows_before=before,
             daily_rows_after=after,
             daily_rows_deleted=before - after,
-            monthly_rows=monthly,
+            monthly_rows=monthly_total,
             series_rows_deleted=series_before - series_after,
-            bytes_on_disk=self.path.stat().st_size if self.path.exists() else 0,
+            bytes_on_disk=sum(f.stat().st_size for f in self.root.rglob("*") if f.is_file()),
         )
 
-    # ------------------------------------------------------------------- read
-
+    # ------------------------------------------------------------------ read
     def latest(self) -> list[dict]:
-        """The most recent close held for every counter."""
-        return [
-            {"ticker": t, "trade_date": d.isoformat(), "close": c, "source": s, "fetched_at": f.isoformat()}
-            for t, d, c, s, f in self.db.execute(
-                """
-                SELECT ticker, trade_date, close, source, fetched_at FROM (
-                    SELECT *, row_number() OVER (PARTITION BY ticker ORDER BY trade_date DESC) AS rn
-                    FROM daily_prices
-                ) WHERE rn = 1 ORDER BY ticker
-                """
-            ).fetchall()
-        ]
-
-    def series(self, ticker: str) -> list[dict]:
-        """Daily window then month-end archive, oldest first, deduplicated."""
-        rows = self.db.execute(
-            """
-            SELECT month_end AS d, close FROM monthly_prices WHERE ticker = ?
-            AND month_end < (SELECT coalesce(min(trade_date), DATE '9999-12-31')
-                             FROM daily_prices WHERE ticker = ?)
-            UNION ALL
-            SELECT trade_date AS d, close FROM daily_prices WHERE ticker = ?
-            ORDER BY d
-            """,
-            [ticker, ticker, ticker],
-        ).fetchall()
-        return [{"date": d.isoformat(), "close": c} for d, c in rows]
-
-    def observations(self) -> dict[str, list[dict]]:
-        """Every registered series the store holds, oldest first."""
-        out: dict[str, list[dict]] = {}
-        for sid, d, v in self.db.execute(
-            "SELECT series_id, obs_date, value FROM series_observations ORDER BY series_id, obs_date"
-        ).fetchall():
-            out.setdefault(sid, []).append({"date": d.isoformat(), "value": v})
+        meta = _read(self._meta_path(), {})
+        out = []
+        for ticker in self._tickers():
+            rows = _read(self.daily / f"{ticker}.json", [])
+            if not rows:
+                continue
+            m = meta.get(ticker, {})
+            out.append({
+                "ticker": ticker, "trade_date": rows[-1]["d"], "close": rows[-1]["c"],
+                "isin": m.get("isin"), "sector": m.get("sector"),
+                "source": m.get("source"), "fetched_at": m.get("fetched_at"),
+            })
         return out
 
+    def series(self, ticker: str) -> list[dict]:
+        """Month-end archive then the daily window, oldest first, deduplicated."""
+        daily = _read(self.daily / f"{ticker}.json", [])
+        monthly = _read(self.monthly / f"{ticker}.json", [])
+        earliest = daily[0]["d"] if daily else "9999-12-31"
+        rows = [{"date": r["d"], "close": r["c"]} for r in monthly if r["d"] < earliest]
+        rows.extend({"date": r["d"], "close": r["c"]} for r in daily)
+        return rows
+
+    def observations(self) -> dict[str, list[dict]]:
+        return {
+            p.stem: [{"date": r["d"], "value": r["v"]} for r in _read(p, [])]
+            for p in sorted(self.series_dir.glob("*.json"))
+        }
+
     def emit(self, out_dir: str | Path, *, private: bool = True) -> Path:
-        """Write the compact JSON the app reads. One index, one file per counter.
+        """Write the index the app reads first.
 
         `private` must stay true for any path that is not solely Brian's own
-        device. The NSE asserts its data is proprietary and may not be copied,
-        so its series are written only under a private emit and are withheld
-        from a public one. Refusing here is cheaper than a takedown.
+        device: NSE data is held for private use and is withheld from a public
+        emit. Refusing here is cheaper than a takedown.
         """
         out = Path(out_dir)
         if not private:
@@ -323,19 +326,13 @@ class PriceStore:
                 )
         (out / "series").mkdir(parents=True, exist_ok=True)
         latest = self.latest()
-        index = {
+        _write_atomic(out / "latest.json", {
             "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
             "window_days": DAILY_WINDOW_DAYS,
             "counters": latest,
-        }
-        index["series"] = {
-            sid: BY_ID[sid].label
-            for (sid,) in self.db.execute(
-                "SELECT DISTINCT series_id FROM series_observations ORDER BY series_id"
-            ).fetchall()
-        }
-        (out / "latest.json").write_text(json.dumps(index, indent=1))
-        (out / "series-observations.json").write_text(json.dumps(self.observations()))
+            "series": {sid: BY_ID[sid].label for sid in self.observations() if sid in BY_ID},
+        })
         for row in latest:
-            (out / "series" / f"{row['ticker']}.json").write_text(json.dumps(self.series(row["ticker"])))
+            _write_atomic(out / "series" / f"{row['ticker']}.json", self.series(row["ticker"]))
+        _write_atomic(out / "series-observations.json", self.observations())
         return out / "latest.json"

@@ -1,11 +1,15 @@
 [Unit]
-Description=Collect NSE closes after the market settles
+Description=Collect NSE closes and CBK key rates after the market settles
 
 [Timer]
 # The NSE trades 09:00-15:00 EAT. 18:00 EAT is 15:00 UTC, well after the close
-# and after the day's price list is published. Weekdays only; a public holiday
-# simply yields no new list, which the run reports rather than treats as failure.
-OnCalendar=Mon..Fri *-*-* 15:00:00 UTC
+# and after the day's figures are published.
+#
+# Monday to Saturday, skipping Sunday. The exchange trades Monday to Friday, but
+# the Saturday run is cheap insurance: it picks up a Friday list published late
+# rather than leaving the app stale until Monday. A day with nothing new is
+# reported as skipped, not as a failure.
+OnCalendar=Mon..Sat *-*-* 15:00:00 UTC
 RandomizedDelaySec=600
 Persistent=true
 
