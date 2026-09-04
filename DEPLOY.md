@@ -108,31 +108,19 @@ sudo chown myanalyst:myanalyst /home/myanalyst/secrets/myanalyst.env
 sudo chmod 600 /home/myanalyst/secrets/myanalyst.env'
 ```
 
-**The Telegram pair is a secret**, so it goes in through an editor and never
-through a command line. `ssh` needs `-t` to give the editor a terminal — with
-plain `ssh` you get `Error opening terminal: unknown`, which is the single most
-common way to lose two minutes here:
+**The Telegram pair is a secret**, so it is typed on the VM and never passes
+through a command line, a chat window or a shell history:
 
 ```sh
-ssh -t pulse 'sudo nano /home/myanalyst/secrets/myanalyst.env'
+./setup-telegram.sh
 ```
 
-Append `TELEGRAM_BOT_TOKEN=` and `TELEGRAM_CHAT_ID=` with their values. The
-collector runs without them; it simply cannot tell you when it fails.
+It prompts for the bot token with nothing echoed, asks Telegram which chats have
+messaged the bot so the chat id does not have to be hunted down, writes both
+into the env file at mode 600 owned by the service user — keeping whatever else
+is already in there — and then fires one alert on purpose.
 
-The collector needs no API key to read its two sources. The Telegram pair is
-for alerts only, never a control plane, and without it a failed run is silent.
-
-**Fire the alert once, on purpose, before you trust it** (`developer` §13):
-
-```sh
-# Loads the file the way systemd does, as the user that will run it. `env $(...)`
-# looks equivalent and is not: it splits on whitespace, so any value with a
-# space in it arrives mangled or as a separate variable.
-ssh pulse "sudo -u myanalyst bash -c '
-  set -a; . /home/myanalyst/secrets/myanalyst.env; set +a
-  exec /opt/myanalyst/current/.venv/bin/myanalyst-collect --test-alert'"
-```
+The collector runs without the pair; it simply cannot tell you when it fails.
 
 Expect `test alert delivered` and a message on your phone. An alert nobody has
 seen arrive is not an alert.
