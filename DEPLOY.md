@@ -120,7 +120,7 @@ for alerts only, never a control plane, and without it a failed run is silent.
 **Fire the alert once, on purpose, before you trust it** (`developer` §13):
 
 ```sh
-ssh pulse 'set -a; . ~/secrets/myanalyst.env; set +a;
+ssh pulse 'sudo -u myanalyst env $(sudo cat /home/myanalyst/secrets/myanalyst.env | xargs) \
   /opt/myanalyst/current/.venv/bin/myanalyst-collect --test-alert'
 ```
 
@@ -265,8 +265,12 @@ network is not offline-capable.
 **The collector:**
 
 ```sh
-ssh pulse '/opt/myanalyst/current/.venv/bin/myanalyst-collect --health --db /var/lib/myanalyst/prices.duckdb'
+ssh pulse 'sudo -u myanalyst /opt/myanalyst/current/.venv/bin/myanalyst-collect \
+  --health --db /var/lib/myanalyst/store'
 ```
+
+Run it as the service user: the store belongs to `myanalyst`, and your login
+user cannot read it.
 
 The collector alerts on its own failures: a refused source, a price list that
 will not parse, an unexpected error, and a store that has stopped advancing.
@@ -315,5 +319,5 @@ condition.
 | NSE layout changed | `parse-failed` in the log, nothing stored | Save the new page into `collector/fixtures/`, run the skipped tests, widen the header lists in `collector/nse.py`. The store is untouched, so there is no bad data to undo. |
 | CBK layout changed | `rates-failed`, prices still stored | Same, in `collector/cbk.py`. Prices are deliberately not lost to a rates failure. |
 | Health fails on a Monday | `newest close is 5 days old` | A Friday public holiday plus a weekend crosses the four-day limit. Confirm with `journalctl`, then raise `--stale-after` for that week rather than silencing the check. |
-| A bad day was stored | Wrong prices for one date | `duckdb /var/lib/myanalyst/prices.duckdb "DELETE FROM daily_prices WHERE trade_date = DATE '<date>'"` then re-run with `--date <date>`. |
+| A bad day was stored | Wrong prices for one date | The store is plain JSON, one file per counter, so fix it with the tools you already have: `sudo -u myanalyst sh -c 'cd /var/lib/myanalyst/store/prices/daily && for f in *.json; do python3 -c "import json,sys;p=sys.argv[1];r=[x for x in json.load(open(p)) if x[\"d\"]!=sys.argv[2]];json.dump(r,open(p,\"w\"))" "$f" "<date>"; done'` then re-run with `--date <date>`. |
 | Disk filling | The VM is at 1 GB | It should not: the whole store is about 1 MB. If it is, `myanalyst-collect --prune-only` and read the line it prints. Something is writing outside the retention rule. |
