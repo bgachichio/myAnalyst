@@ -28,6 +28,18 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,woff2,png,svg}"],
+        // pdf.js and its worker are 1.7 MB between them and most sessions
+        // never open a PDF. Both stay out of the precache and are cached the
+        // first time one is read: installing the app stays a small download,
+        // and after one PDF the reader works offline like everything else.
+        globIgnores: ["**/pdf.worker*", "**/assets/pdf-*"],
+        runtimeCaching: [
+          {
+            urlPattern: /\/assets\/pdf[-.].*\.m?js$/,
+            handler: "CacheFirst",
+            options: { cacheName: "pdf-reader", expiration: { maxEntries: 4 } },
+          },
+        ],
         // The shell is precached, so the app opens with no network. Prices are
         // never cached here: they are private data and belong in the store.
         navigateFallback: "index.html",

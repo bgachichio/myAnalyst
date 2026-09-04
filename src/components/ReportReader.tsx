@@ -22,8 +22,24 @@ type Phase =
   | { at: "failed"; why: string }
   | { at: "review"; from: string; got: Extraction; chosen: Record<string, number> };
 
+/** What the reader hands over: the latest period, its comparative, and what to call them. */
+export interface ReadFigures {
+  current: Partial<Inputs>;
+  prior: Partial<Inputs>;
+  labels: { current: string; prior: string };
+}
+
 interface Props {
-  onApply: (figures: Partial<Inputs>, source: string) => void;
+  onApply: (figures: ReadFigures, source: string) => void;
+}
+
+/** The report's own year headings where it gave them, and honest placeholders where it did not. */
+function periodLabels(got: Extraction): { current: string; prior: string } {
+  const [first, second] = got.periodYears;
+  if (first === undefined || second === undefined) return { current: "Latest", prior: "Prior" };
+  return got.currentIsFirstColumn
+    ? { current: String(first), prior: String(second) }
+    : { current: String(second), prior: String(first) };
 }
 
 const money = (n: number) =>
@@ -68,7 +84,14 @@ export function ReportReader({ onApply }: Props) {
         setPhase({ ...phase, chosen: { ...phase.chosen, [key]: value } })}
       onCancel={() => setPhase({ at: "idle" })}
       onApply={() => {
-        onApply(phase.chosen as Partial<Inputs>, phase.from);
+        const prior: Partial<Inputs> = {};
+        for (const c of Object.values(phase.got.candidates) as Candidate[]) {
+          if (c.priorValue !== null) (prior as Record<string, number>)[c.key] = c.priorValue;
+        }
+        onApply(
+          { current: phase.chosen as Partial<Inputs>, prior, labels: periodLabels(phase.got) },
+          phase.from,
+        );
         setPhase({ at: "idle" });
       }}
     />

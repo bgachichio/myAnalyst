@@ -5,9 +5,15 @@ set -euo pipefail
 HOST="${MYANALYST_HOST:-pulse}"
 APP_DIR="/srv/myanalyst/app"
 
-echo "==> Building the app here"
+echo "==> Building and checking the app here"
 npm ci --silent
+npm test
 npm run build
+
+# The unit tests prove the arithmetic. This drives the built app in a real
+# browser and pushes a real PDF through the reader, because a build that
+# compiles and does not work is the failure this catches.
+node scripts/browser-check.mjs
 
 test -f dist/index.html || { echo "!! no dist/index.html; the build produced nothing" >&2; exit 1; }
 echo "    $(find dist -type f | wc -l) files, $(du -sh dist | cut -f1)"

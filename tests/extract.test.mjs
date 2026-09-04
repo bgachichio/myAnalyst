@@ -13,8 +13,8 @@ import { dirname, join } from "node:path";
 
 import {
   CONFIDENT, FLOOR, detectPeriods, detectScale, extract, normalise, parseNumbers, reconcile,
-} from "../dist/extract.js";
-import { groupIntoRows } from "../dist/pdf.js";
+} from "../dist-kernel/extract.js";
+import { groupIntoRows } from "../dist-kernel/pdf.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (name) => JSON.parse(readFileSync(join(here, "..", "fixtures", name), "utf8"));

@@ -13,8 +13,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-import { extract } from "../dist/extract.js";
-import { readPdf } from "../dist/pdf.js";
+import { extract } from "../dist-kernel/extract.js";
+import { readPdf } from "../dist-kernel/pdf.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const kernel = JSON.parse(readFileSync(join(here, "..", "fixtures", "kernel-fixtures.json"), "utf8"));

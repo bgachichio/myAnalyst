@@ -12,8 +12,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-import { extract } from "../dist/extract.js";
-import { decodeXml, parseSharedStrings, parseSheet, parseSheetNames, readXlsx } from "../dist/xlsx.js";
+import { extract } from "../dist-kernel/extract.js";
+import { decodeXml, parseSharedStrings, parseSheet, parseSheetNames, readXlsx } from "../dist-kernel/xlsx.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = join(here, "..", "fixtures", "statement.xlsx");

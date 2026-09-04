@@ -1,23 +1,23 @@
 /**
- * The tool. Eleven figures off a financial statement, a price, a sector, and a
- * verdict that updates as you type - computed by the same kernel the fixtures
- * pin, entirely in the browser.
+ * The tool. A report in, a memo out.
  *
- * A price may be collected, typed, or describe a private company. Nothing here
- * needs a network: the feed fills the price in when it can, and never blocks
- * the work when it cannot.
+ * Twelve figures, a price, a sector and the world outside the company, all
+ * computed by the same kernel the fixtures pin, entirely in the browser. The
+ * report reader fills the figures in; nothing here requires it, and nothing
+ * here requires a network either.
  */
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import { assess, value, type Inputs, type Origin, type Parameters, type SectorProfile } from "../lib/kernel";
-import { ageInDays, loadCollected, type Collected } from "../lib/collected";
+import { useEffect, useMemo, useState } from "react";
+import {
+  type Inputs, type Origin, type Parameters, type SectorProfile,
+} from "../lib/kernel";
+import { DEFAULT_MACRO, buildMemo, periodsFromReport, type Macro, type Period } from "../lib/memo";
+import { ageInDays, loadCollected, loadSeries, type Collected, type Observation } from "../lib/collected";
 import { Card, CardHeading } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Field, Select } from "../components/ui/field";
-// Recharts is the heaviest thing in the bundle and the chart only appears once
-// there is a verdict. Split, so the form opens without waiting for it.
-const ValuationBridge = lazy(() =>
-  import("../components/ValuationBridge").then((m) => ({ default: m.ValuationBridge })),
-);
+import { ReportReader } from "../components/ReportReader";
+import { BLANK_FACTORS, DecisionFactors, type Factors } from "../components/DecisionFactors";
+import { MemoView } from "../components/MemoView";
 
 const DEFAULTS: Parameters = { r: 0.1375, g: 0.04, k: 0.35, n: 15, c: 0.026, w: 0.05, stress: 0.1 };
 
@@ -68,47 +68,73 @@ const ORIGINS: { value: Origin; label: string }[] = [
   { value: "foreign-private", label: "Foreign private" },
 ];
 
-const money = (n: number) =>
-  Number.isFinite(n) ? n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
-
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4 min-h-11">
-      <span className="text-[0.875rem] text-on-surface-variant">{label}</span>
-      <span className="text-[0.9375rem] tabular-nums text-on-surface">{children}</span>
-    </div>
-  );
-}
+const latest = (series: Record<string, Observation[]> | null, id: string): number | null => {
+  const rows = series?.[id];
+  if (!rows?.length) return null;
+  return rows[rows.length - 1].value;
+};
 
 export function Analyse() {
   const [name, setName] = useState("UNGA Group Limited");
   const [sector, setSector] = useState<SectorProfile>("industrial");
   const [inputs, setInputs] = useState<Inputs>(UNGA);
+  const [prior, setPrior] = useState<Partial<Inputs>>({});
+  const [periodLabels, setPeriodLabels] = useState({ current: "Latest", prior: "Prior" });
   const [price, setPrice] = useState("28");
   const [origin, setOrigin] = useState<Origin>("manual");
   const [note, setNote] = useState("");
+  const [source, setSource] = useState<string | null>(null);
+  const [macro, setMacro] = useState<Macro>(DEFAULT_MACRO);
+  const [factors, setFactors] = useState<Factors>(BLANK_FACTORS);
   const [collected, setCollected] = useState<Collected | null>(null);
 
   useEffect(() => {
-    loadCollected().then(setCollected);
+    void loadCollected().then(setCollected);
+    // Where the collector has a figure, it wins over the default; a typed
+    // figure then wins over both, because the person looking at the report can
+    // see something the feed cannot.
+    void loadSeries().then((series) => {
+      if (!series) return;
+      setMacro((m) => ({
+        ...m,
+        inflation: (latest(series, "ke.inflation") ?? m.inflation * 100) / 100,
+        usdKes: latest(series, "fx.usdkes") ?? m.usdKes,
+        btcUsd: latest(series, "btc.usd") ?? m.btcUsd,
+        cbr: (latest(series, "cbk.cbr") ?? (m.cbr === null ? null : m.cbr * 100)) === null
+          ? null
+          : (latest(series, "cbk.cbr") ?? m.cbr! * 100) / 100,
+      }));
+    });
   }, []);
 
   const parsed = Number(price.replace(/,/g, ""));
-  const result = useMemo(() => {
+
+  const periods: Period[] = useMemo(
+    () => periodsFromReport(periodLabels.current, periodLabels.prior, inputs, prior),
+    [inputs, prior, periodLabels],
+  );
+
+  const memo = useMemo(() => {
     if (!(parsed > 0) || !(inputs.shares_issued > 0)) return null;
     try {
-      return {
-        v: value(inputs, { amount: parsed, origin, note: note || undefined }, DEFAULTS),
-        f: assess(inputs, sector, DEFAULTS),
-      };
+      return buildMemo({
+        inputs,
+        price: { amount: parsed, origin, note: note || undefined },
+        params: DEFAULTS, profile: sector, macro, periods,
+      });
     } catch {
       return null;   // a half-typed number is not an error worth shouting about
     }
-  }, [inputs, parsed, origin, note, sector]);
+  }, [inputs, parsed, origin, note, sector, macro, periods]);
 
   const set = (key: keyof Inputs) => (raw: string) => {
     const n = Number(raw.replace(/,/g, ""));
     setInputs((prev) => ({ ...prev, [key]: Number.isFinite(n) ? n : 0 }));
+  };
+
+  const setMacroNumber = (key: "inflation" | "btcAssumedReturn" | "borrowingSpread") => (raw: string) => {
+    const n = Number(raw);
+    setMacro((m) => ({ ...m, [key]: Number.isFinite(n) ? n / 100 : 0 }));
   };
 
   const groups = [...new Set(FIELDS.map((f) => f.group))];
@@ -119,29 +145,39 @@ export function Analyse() {
         <p className="text-[0.75rem] tracking-[0.03em] uppercase text-on-surface-variant">
           {name || "Untitled"}
         </p>
-        <p className="display-sm text-on-surface">{result ? result.v.decision : "Enter the figures"}</p>
-        {result && (
+        <p className="display-sm text-on-surface">{memo ? memo.verdict : "Enter the figures"}</p>
+        {memo && (
           <p className="text-[0.9375rem] leading-7 text-on-surface-variant max-w-[68ch]">
-            Buying {money(result.v.myFutureEps)} of future earnings for{" "}
-            {money(result.v.marketPriceFe)}, a margin of {(result.v.margin * 100).toFixed(1)}%.
-            Priced at {result.v.provenance}.
+            {memo.rationale[0]} Priced at {memo.base.valuation.provenance}.
           </p>
         )}
-        {result?.v.warnings.map((w) => (
-          <p key={w} className="text-[0.8125rem] leading-6 text-on-surface-variant max-w-[68ch]
-                                border-l-2 border-outline pl-3">
-            {w}
-          </p>
-        ))}
+        {source && (
+          <p className="text-[0.75rem] text-on-surface-variant">Figures read from {source}.</p>
+        )}
         <div className="flex flex-wrap gap-3 pt-2">
-          <Button onClick={() => { setInputs(UNGA); setPrice("28"); setName("UNGA Group Limited"); setSector("industrial"); }}>
+          <Button onClick={() => {
+            setInputs(UNGA); setPrior({}); setPrice("28"); setName("UNGA Group Limited");
+            setSector("industrial"); setSource(null);
+          }}>
             Load worked example
           </Button>
-          <Button variant="outlined" onClick={() => { setInputs(BLANK); setPrice(""); setName(""); setNote(""); }}>
+          <Button variant="outlined" onClick={() => {
+            setInputs(BLANK); setPrior({}); setPrice(""); setName(""); setNote(""); setSource(null);
+            setFactors(BLANK_FACTORS);
+          }}>
             Start blank
           </Button>
         </div>
       </section>
+
+      <ReportReader
+        onApply={(figures, from) => {
+          setInputs((prev) => ({ ...prev, ...figures.current }));
+          setPrior(figures.prior);
+          setPeriodLabels(figures.labels);
+          setSource(from);
+        }}
+      />
 
       <Card>
         <div className="flex flex-col gap-5">
@@ -157,8 +193,9 @@ export function Analyse() {
           {collected && (
             <p className="text-[0.75rem] text-on-surface-variant">
               Collector last ran {collected.generated_at.slice(0, 10)}
-              {ageInDays(collected.generated_at)! > 4 && " — stale"}
-              {collected.counters.length > 0 && `, holding ${collected.counters.length} counters`}.
+              {(ageInDays(collected.generated_at) ?? 0) > 4 && " — stale"}
+              {collected.counters.length > 0 &&
+                `, holding ${collected.counters.length} counter${collected.counters.length === 1 ? "" : "s"}`}.
             </p>
           )}
         </div>
@@ -175,64 +212,43 @@ export function Analyse() {
                 value={String(inputs[f.key] ?? "")}
                 onValue={set(f.key)}
                 inputMode="decimal"
+                hint={prior[f.key] !== undefined
+                  ? `${periodLabels.prior}: ${prior[f.key]!.toLocaleString("en-GB")}`
+                  : undefined}
               />
             ))}
           </div>
         </Card>
       ))}
 
-      {result && (
+      <Card>
+        <div className="flex flex-col gap-5">
+          <CardHeading>The world outside the company</CardHeading>
+          <Field label="Inflation" value={(macro.inflation * 100).toFixed(1)}
+                 onValue={setMacroNumber("inflation")} inputMode="decimal" suffix="%"
+                 hint="The hurdle the income has to clear. Filled from the collector where it has a figure." />
+          <Field label="Assumed bitcoin return" value={(macro.btcAssumedReturn * 100).toFixed(0)}
+                 onValue={setMacroNumber("btcAssumedReturn")} inputMode="decimal" suffix="% a year"
+                 hint="The opportunity cost the return is compared against. Nobody can forecast it; stating it is what makes the comparison arguable." />
+          <Field label="Borrowing spread over the CBR" value={(macro.borrowingSpread * 100).toFixed(0)}
+                 onValue={setMacroNumber("borrowingSpread")} inputMode="decimal" suffix="%"
+                 hint="Used only to test whether interest would be sustainable before entry." />
+          <Field label="Years to the assumed exit" value={String(macro.holdYears)}
+                 onValue={(raw) => setMacro((m) => ({ ...m, holdYears: Math.max(1, Number(raw) || 1) }))}
+                 inputMode="numeric" suffix="years" />
+          <div className="flex gap-4">
+            <Field label="Latest period" value={periodLabels.current}
+                   onValue={(v) => setPeriodLabels((p) => ({ ...p, current: v }))} />
+            <Field label="Comparative" value={periodLabels.prior}
+                   onValue={(v) => setPeriodLabels((p) => ({ ...p, prior: v }))} />
+          </div>
+        </div>
+      </Card>
+
+      {memo && (
         <>
-          <Card>
-            <Suspense fallback={<div className="h-56 rounded-[12px] bg-surface-container-high" aria-hidden="true" />}>
-            <ValuationBridge
-              title="What the earnings are worth, against what the market charges"
-              unit="KES per share"
-              summary={`The market charges ${money(result.v.marketPriceFe)} for earnings this model values at ${money(
-                result.v.myValuation,
-              )} after a ${(DEFAULTS.k * 100).toFixed(0)}% margin of safety.`}
-              rows={[
-                { name: "Future EPS", value: result.v.myFutureEps, key: false },
-                { name: "My valuation", value: result.v.myValuation, key: true },
-                { name: "Market's price", value: result.v.marketPriceFe, key: false },
-              ]}
-            />
-            </Suspense>
-          </Card>
-
-          <Card>
-            <div className="flex flex-col gap-3">
-              <CardHeading>The decision</CardHeading>
-              <Row label="Entry price, including costs">{money(result.v.entryPrice)}</Row>
-              <Row label="Future earnings per share">{money(result.v.myFutureEps)}</Row>
-              <Row label="My valuation of them">{money(result.v.myValuation)}</Row>
-              <Row label="Present value of dividends">{money(result.v.pvDividendsPs)}</Row>
-              <Row label="Cash per share">{money(result.v.cashPs)}</Row>
-              <Row label="Market's price of future earnings">{money(result.v.marketPriceFe)}</Row>
-              <Row label="Trailing P/E">{result.v.trailingPe.toFixed(2)}</Row>
-              <Row label="Net asset value per share">{money(result.v.navPs)}</Row>
-              <Row label="Net dividend per share">{money(result.v.netDividendPs)}</Row>
-              {result.v.cigarButt && (
-                <p className="text-[0.8125rem] leading-6 text-on-surface-variant pt-2 max-w-[68ch]">
-                  Trading below net assets: a cigar butt.
-                </p>
-              )}
-            </div>
-          </Card>
-
-          <Card>
-            <div className="flex flex-col gap-3">
-              <CardHeading>Fragility, at a 10% squeeze</CardHeading>
-              <Row label="Liquidity ratio">{result.f.liquidityRatio.toFixed(2)}</Row>
-              <Row label="Surplus over obligations">{(result.f.surplus * 100).toFixed(2)}%</Row>
-              <Row label="Under stress">{(result.f.stressedSurplus * 100).toFixed(2)}%</Row>
-              <Row label="Verdict">{result.f.verdict}</Row>
-              <p className="text-[0.8125rem] leading-6 text-on-surface-variant pt-2 max-w-[68ch]">
-                {result.f.focusModelNote}
-                {result.f.focusModelRatio !== null && ` Ratio ${(result.f.focusModelRatio * 100).toFixed(1)}%.`}
-              </p>
-            </div>
-          </Card>
+          <DecisionFactors factors={factors} margin={memo.base.margin} onChange={setFactors} />
+          <MemoView memo={memo} sector={sector} />
         </>
       )}
     </div>

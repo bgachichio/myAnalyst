@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "preview": "vite preview",
-    "test": "tsc -p tsconfig.kernel.json && node --test tests/*.test.mjs"
+    "test": "tsc -p tsconfig.kernel.json && node --test tests/*.test.mjs",
+    "check": "npm run build && node scripts/browser-check.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

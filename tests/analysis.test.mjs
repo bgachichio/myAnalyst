@@ -8,8 +8,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-import { assess, value } from "../dist/kernel.js";
-import { BUY, HOLD, SELL, energyScore, hurdles, irr, multiples, verdict } from "../dist/analysis.js";
+import { assess, value } from "../dist-kernel/kernel.js";
+import { BUY, HOLD, SELL, energyScore, hurdles, irr, multiples, verdict } from "../dist-kernel/analysis.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtures = JSON.parse(readFileSync(join(here, "..", "fixtures", "kernel-fixtures.json"), "utf8"));
