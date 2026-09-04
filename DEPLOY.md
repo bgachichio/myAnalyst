@@ -77,7 +77,7 @@ Names only. No values in this document, ever.
 
 | Name | What it is | Where it comes from | Where it lives |
 |---|---|---|---|
-| `MYANALYST_DB` | Path to the DuckDB store | You choose it | `~/secrets/myanalyst.env` on the VM, mode 600 |
+| `MYANALYST_DB` | Directory holding the JSON store | You choose it | `/home/myanalyst/secrets/myanalyst.env` on the VM, mode 600 |
 | `MYANALYST_OUT` | Where the private JSON is written | `/srv/myanalyst/private` | same file |
 | `MYANALYST_WINDOW_DAYS` | Trading days of daily history kept | Default 400 | same file |
 | `TELEGRAM_BOT_TOKEN` | Alert channel for failures | BotFather | same file |
@@ -85,7 +85,12 @@ Names only. No values in this document, ever.
 
 The service runs as the `myanalyst` user and systemd reads this file as root
 before the sandbox applies, so it lives in the **service user's** home, not
-yours:
+yours.
+
+> **`~` is a trap here.** In your ssh session `~` is `/home/bgkaranja`; the file
+> is at `/home/myanalyst/secrets/myanalyst.env`, owned by `myanalyst` and mode
+> 600. `ssh pulse '. ~/secrets/myanalyst.env'` therefore fails with *Permission
+> denied* on a path that does not exist. Write the path out in full, every time.
 
 Two steps, because only one of the five values is a secret.
 
@@ -104,8 +109,9 @@ sudo chmod 600 /home/myanalyst/secrets/myanalyst.env'
 ```
 
 **The Telegram pair is a secret**, so it goes in through an editor and never
-through a command line. `ssh` needs `-t` to give the editor a terminal —
-without it you get `Error opening terminal: unknown`:
+through a command line. `ssh` needs `-t` to give the editor a terminal — with
+plain `ssh` you get `Error opening terminal: unknown`, which is the single most
+common way to lose two minutes here:
 
 ```sh
 ssh -t pulse 'sudo nano /home/myanalyst/secrets/myanalyst.env'
@@ -120,12 +126,21 @@ for alerts only, never a control plane, and without it a failed run is silent.
 **Fire the alert once, on purpose, before you trust it** (`developer` §13):
 
 ```sh
-ssh pulse 'sudo -u myanalyst env $(sudo cat /home/myanalyst/secrets/myanalyst.env | xargs) \
-  /opt/myanalyst/current/.venv/bin/myanalyst-collect --test-alert'
+# Loads the file the way systemd does, as the user that will run it. `env $(...)`
+# looks equivalent and is not: it splits on whitespace, so any value with a
+# space in it arrives mangled or as a separate variable.
+ssh pulse "sudo -u myanalyst bash -c '
+  set -a; . /home/myanalyst/secrets/myanalyst.env; set +a
+  exec /opt/myanalyst/current/.venv/bin/myanalyst-collect --test-alert'"
 ```
 
 Expect `test alert delivered` and a message on your phone. An alert nobody has
 seen arrive is not an alert.
+
+Until the Telegram pair is filled in this prints `no alert channel configured;
+failure will be silent` and `test alert FAILED`, and that is the honest answer
+rather than a defect: there is no channel, so nothing was delivered. It blocks
+nothing — the collector runs, and the app does not depend on it.
 
 ## 4. FIRST-RUN
 
@@ -206,6 +221,8 @@ dig +short analyst.gachichio.org          # must print 34.35.177.164
 # 2. The password. Choose it, then hash it ON THE VM. The hash goes in a file
 #    the web server reads; the password itself goes in your manager and into
 #    the shell you deploy from. `ssh -t` because it prompts.
+# Nothing echoes as you type, not even dots. "Error: password does not match"
+# means the two entries differed - retype both, it is not a failure of anything.
 ssh -t pulse 'caddy hash-password'        # type the password twice, copy the hash
 
 # 3. The site. Append the block, give Caddy the hash, create the app directory.
@@ -276,7 +293,7 @@ every contest with them.
 | Path | What |
 |---|---|
 | `/opt/myanalyst/` | Releases and the `current` symlink |
-| `/var/lib/myanalyst/` | The DuckDB store |
+| `/var/lib/myanalyst/` | The JSON store, one file per counter |
 | `/srv/myanalyst/private/` | Emitted JSON. Named `private` because NSE data must never be served |
 | `/etc/systemd/system/myanalyst-collect.{service,timer}` | The unit and its schedule |
 
