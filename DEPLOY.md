@@ -178,12 +178,39 @@ Analyse screen. Fonts are self-hosted; nothing is fetched from a CDN at runtime.
 
 ## 6. DEPLOY
 
-**The PWA — Vercel, `building` §8.2 Path A:**
+**The PWA — analyst.gachichio.org, on the VM.**
+
+Not Vercel. The app and the collector's data are served from the **same
+origin**, which solves two things at once: a browser cannot read nse.co.ke
+cross-origin, and NSE data must not sit on a public CDN. One hostname, one
+password, both problems gone.
+
+*Once, before the first app deploy:*
 
 ```sh
-npm ci && npm run build && npm run preview   # check http://localhost:4173 first
-npx vercel                                   # preview URL, open it
-npx vercel --prod                            # promote
+# 1. DNS: an A record for analyst -> the VM's address (34.35.177.164),
+#    at your registrar. Wait for it to resolve:
+dig +short analyst.gachichio.org
+
+# 2. A password. The hash goes on the VM; the password stays in your manager.
+caddy hash-password                       # paste the hash into the next command
+
+ssh pulse 'sudo install -d -o myanalyst -g myanalyst -m 755 /srv/myanalyst/app
+sudo tee -a /etc/caddy/Caddyfile < /dev/null'
+scp deploy/Caddyfile.analyst pulse:/tmp/
+ssh pulse 'cat /tmp/Caddyfile.analyst | sudo tee -a /etc/caddy/Caddyfile >/dev/null
+sudo tee /etc/caddy/env >/dev/null <<EOF
+MYANALYST_PASSWORD_HASH=<paste the hash here>
+EOF
+sudo chmod 600 /etc/caddy/env
+sudo systemctl edit --full caddy   # add: EnvironmentFile=/etc/caddy/env
+sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy'
+```
+
+*Every time after that:*
+
+```sh
+./deploy-app.sh      # builds here, ships dist/, validates Caddy, reloads, verifies
 ```
 
 Build on the Lenovo. Never on the VM.
@@ -255,8 +282,12 @@ Prove all of it on the box:
 **The PWA:**
 
 ```sh
-curl -fsS -o /dev/null -w "%{http_code}\n" https://<app>.vercel.app   # expect 200
+curl -fsS -o /dev/null -w "%{http_code}\n" -u brian https://analyst.gachichio.org/   # expect 200
+curl -fsS -o /dev/null -w "%{http_code}\n"    https://analyst.gachichio.org/         # expect 401
 ```
+
+The second one matters as much as the first: an unauthenticated request must be
+refused, because the data behind it is not ours to publish.
 
 Then open it on the handset: install it, turn on aeroplane mode, and confirm it
 still opens and still reaches a verdict. An installable app that needs the
@@ -295,7 +326,11 @@ ssh pulse 'journalctl -u myanalyst-collect -n 50 --no-pager'
 
 ## 8. ROLLBACK
 
-**The PWA:** `npx vercel rollback` — instant, no rebuild, previous deployment.
+**The PWA:** the previous copy is kept beside the live one, so it is a rename.
+
+```sh
+ssh pulse 'sudo rm -rf /srv/myanalyst/app && sudo mv /srv/myanalyst/app.old /srv/myanalyst/app && sudo systemctl reload caddy'
+```
 
 **The collector:**
 

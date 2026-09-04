@@ -1,0 +1,61 @@
+# myAnalyst — analyst.gachichio.org
+#
+# Append this to the VM's Caddyfile. It adds one site block and touches nothing
+# already served there: no shared root, no shared path, no change to any
+# existing block.
+#
+# The app and its data are served from the SAME ORIGIN. That is deliberate:
+# a browser cannot read nse.co.ke cross-origin, and the collector's output must
+# not sit on a public CDN. One hostname solves both.
+
+analyst.gachichio.org {
+	encode zstd gzip
+
+	# Private use only. NSE data is proprietary (see LICENCE-NOTES.md), so the
+	# whole site is behind a password - the app and the data together.
+	# Generate the hash with: caddy hash-password
+	basic_auth {
+		brian {$MYANALYST_PASSWORD_HASH}
+	}
+
+	# The collector's output. Read-only, no directory listing.
+	handle_path /data/* {
+		root * /srv/myanalyst/private
+		file_server {
+			hide .* 
+		}
+	}
+
+	# The app. A single-page app, so unknown paths fall back to index.html.
+	handle {
+		root * /srv/myanalyst/app
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		# The app talks to nothing but itself.
+		Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# The service worker must never be cached, or an update never arrives.
+	@sw path /sw.js /registerSW.js
+	header @sw Cache-Control "no-cache"
+
+	# Fingerprinted assets are immutable; the collector's JSON never is.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+	@data path /data/*
+	header @data Cache-Control "no-store"
+
+	log {
+		output file /var/log/caddy/analyst.log {
+			roll_size 10mb
+			roll_keep 3
+		}
+	}
+}
