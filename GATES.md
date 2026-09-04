@@ -1,4 +1,4 @@
-# Gate record — myAnalyst, 4 September 2026
+# Gate record — myAnalyst, 4 September 2026 (deployed)
 
 Run against `building` v2.0, `developer` v1.0, `design` v1.1 and `audit` v1.0.
 Evidence is a command that was run, not a claim. Where something has never been
@@ -98,7 +98,7 @@ every restated multiple prints its own arithmetic.
 | **G1 Necessity** | **PASS** | Three Questions in the build brief §4. One deletion this round: the Journal placeholder |
 | **G2 Code integrity** | **PASS** | **202 tests**: 103 Python over the kernel, store, registry and adapters; 99 TypeScript over the kernel, the memo, the reader, the private deal, the calendar and the comparison. Two implementations of the kernel held to one fixture file so they cannot drift. Plus **37 browser checks** on the built app |
 | **G3 Supply chain** | **PASS** | Python dependencies pinned exactly; `package-lock.json` committed; **0 npm advisories** at any level, production and development, after the vite upgrade; 0 Python advisories. `pdfjs-dist` pinned to 5.5.207 because version 6 declares support for Node 22 and then calls `Promise.try`, which Node 22 does not have |
-| **G4 Runtime & deploy** | **PASS**, one item unproven | Non-root service user, no capabilities, atomic directory swap, health check that passes only on recent good data, never builds on the VM. `deploy-app.sh` now runs the unit tests and the browser check before anything ships. **The rollback has never been executed** |
+| **G4 Runtime & deploy** | **PASS**, and the rollback is now proven | Non-root service user, no capabilities, atomic directory swap, never builds on the VM. `deploy-app.sh` runs the unit tests and the browser check before anything ships, and refuses to start without its preconditions. **The rollback has been executed in anger**: the site block took Caddy down, `rollback-site.sh` removed it and brought Caddy back, and the app deployed cleanly afterwards. `https://analyst.gachichio.org/ -> 200` |
 | **G5 Observability** | **PARTIAL** | journald plus a collection log; alerts fire on a refused source, an unparseable page, an unexpected error, and a store that has stopped advancing. **The alert has never been delivered and there has been no restore drill** |
 
 ---
@@ -114,16 +114,45 @@ as its accessible description.
 
 ---
 
+## The deployment, and the outage it caused
+
+The app is live at **https://analyst.gachichio.org**, behind basic auth, on the
+same origin as the collector's data. `deploy-app.sh` verified it: **200**.
+
+Getting there took seven attempts and caused an outage of gachichio.org. Every
+failure was in the deployment path, none in the app, and all of them were mine:
+
+| # | What failed | Why |
+|---|---|---|
+| 1 | The browser check would not start | It hardcoded a Chromium path that exists only in the sandbox it was written in |
+| 2 | The theme would have been dead in production | The no-FOUC script was inline under `script-src 'self'`. Found only after the check was made to serve the real policy |
+| 3 | `caddy hash-password` "not found" | The runbook told him to run it locally; Caddy is on the VM |
+| 4 | A blank password reached the deploy | Two lines that, pasted together, let `read` swallow an empty one |
+| 5 | `caddy validate` rejected a valid config | It substitutes `{$VAR}` at adapt time, and only systemd holds the value |
+| 6 | Sourcing the env file aborted | A bcrypt hash contains `$2a$14$`, which the shell expands |
+| 7 | **Caddy would not start, taking gachichio.org down** | The site block wrote an access log to a file. `caddy validate` never touches the filesystem, so it passed and then refused to start the whole server |
+| 8 | The rollback restored the fault | The backup was first taken *after* the block had been appended, so it carried the thing it was meant to undo |
+
+Both are fixed at the root rather than worked around: there is no log file at
+all now (systemd already journals access logs), and the rollback strips the
+block whether or not it restores a backup, then cleans the backup too.
+
+**The lesson, once, plainly.** Every one of these came from verifying in the
+environment I was standing in and writing instructions for a machine I cannot
+reach. The unit tests and the browser checks were green throughout and told me
+nothing about any of it.
+
 ## What is still not true
 
-Unchanged from the last record, and none of it fixable from here:
-
-1. **No adapter has ever made a live call to nse.co.ke or centralbank.go.ke
-   from this machine.** The equity feed is client-rendered and its endpoint is
-   still unknown; `myanalyst-probe` exists to find it and has never been run.
-   Three index levels do collect.
-2. **The rollback has never been run.** One command after the first deploy,
-   then the date goes into DEPLOY.md §8.
+1. **No adapter has ever made a live call to nse.co.ke or centralbank.go.ke.**
+   The equity feed is client-rendered and its endpoint is still unknown;
+   `myanalyst-probe` exists to find it and has never been run. Three index
+   levels do collect.
+2. **The collector is not redeployed since `probe.py` was added**, so
+   `myanalyst-probe` is not on the VM yet. `./deploy.sh` puts it there.
 3. **The alert has never been delivered, and no restore drill has been held.**
-
-Everything a machine here could settle is settled. These three need the VM.
+   No Telegram channel is configured, so a failed collection is currently
+   silent.
+4. **The site password hash was pasted into a chat transcript.** It is a bcrypt
+   hash rather than a password, but it is brute-forceable offline. Rotate it:
+   `ssh pulse 'sudo rm /etc/caddy/env'` then `./setup-site.sh`.

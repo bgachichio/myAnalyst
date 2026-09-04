@@ -1,78 +1,87 @@
-# Design compliance — the PWA shell
+# Design compliance — myAnalyst
 
 `design.md` §17, printed before shipping. Verified on a real headless Chromium
-at 390×900 and 1280×900, in both themes and at every font scale, not by reading
-the code.
+at 390×844 in both themes, under the **same content-security-policy Caddy
+serves**, not by reading the code. The screens are Analyse, Private, Watchlist,
+Compare and Settings.
 
 ```
-DESIGN COMPLIANCE - myAnalyst shell (Analyse, Watchlist, Compare, Journal, Settings)
+DESIGN COMPLIANCE - myAnalyst, 4 September 2026
 
 SUBSTRATE
-[x] shadcn/ui patterns + Tailwind only. No MUI, no other UI library installed.
-[x] Zero hardcoded hex values in component files - all colour via --md-* tokens.
-[x] Zero raw Tailwind palette classes (gray/slate/zinc).
+[x] shadcn/ui patterns + Tailwind only. No MUI, chart.js, bootstrap, antd or
+    chakra in package.json.
+[x] Zero hardcoded hex values in src/components, src/screens or src/hooks.
+    Verified: grep for #rgb/#rrggbb returns nothing.
+[x] Zero raw Tailwind palette classes (gray/slate/zinc/red/blue/...).
+    Verified: grep returns nothing.
 
 SURFACE
-[x] Every colour is an --md-* role token, paired with its on- partner.
-[x] Green appears on action and active state only: primary button, active nav,
-    active segment, chart series.
+[x] Every colour is an --md-* role token paired with its on- partner. The
+    error-container pair was added when the reader needed it, rather than
+    reaching for a raw red.
+[x] Green on action and active state only: primary button, active nav, active
+    segment, chart series, slider track and thumb.
 [x] Elevation from the six-level set; dark mode drops cards to flat.
-[x] Inter for UI and body. Courier Prime for display-*/headline-* only.
-[x] Weights 400/500/600 on Inter, 400 on mono. Tracking 0em on every mono token.
-[x] No px font sizes. Every size in rem, so one variable moves the system.
-[x] Ripple + state layer on every button, suppressed under reduced motion.
+[x] Inter for UI and body; Courier Prime bound to .display-*/.headline-* only.
 
-STRUCTURE
-[x] Density comfortable. Surface tint carries separation, not borders.
-[x] Cards at 20px radius. Primary and tonal buttons are pills.
-[x] Spacing values from the approved scale only.
-[x] Screen gutter 16/24/32, card padding 20/24, section gap 40.
-[x] No element carries both a border and a shadow.
-[x] Single column on mobile. Touch targets >= 44px; primary action 48px.
+LAYOUT
+[x] One column on mobile, always. Gutters and gaps from the §8.2 scale.
+[x] No page scrolls sideways at 390px. Asserted per screen, including the
+    private-deal screen with its five input cards.
+[x] Prose capped at 68ch everywhere it appears.
 
-CHARTS
-[x] Horizontal gridlines only. No axis lines, tick marks or border.
-[x] Title, unit, direct label on the key point, one-sentence summary.
-[x] Single series, so --md-primary. Bars start at zero.
-[x] Hidden data table for screen readers.
+CONTROLS
+[x] Every interactive control clears the 44px touch floor. Asserted in the
+    browser across both themes; screen-reader-only controls are excluded
+    explicitly, because measuring a clipped element measures the clip.
+[x] Ripple on every button and nav item, via one shared hook.
+[x] Focus visible on every control, 2px, offset, primary.
 
-NON-NEGOTIABLES
-[x] Auto/Light/Dark toggle, default Auto, persisted to ui.theme.
-[x] Font size toggle, four steps, persisted to ui.fontScale.
-[x] No-FOUC script in <head>, before any stylesheet.
-[x] Tested at xlarge scale and in dark mode - verified, screenshots taken.
-[x] PWA installable, offline-capable, mobile as the primary target.
+CHARTS (§11.1, the four-part contract)
+[x] Title, unit stated once, direct label on the point that matters, and a
+    one-sentence summary that doubles as the accessible description.
+[x] Bars start at zero. Single series, so --md-primary.
+[x] Every chart carries a screen-reader table of the same numbers.
+[x] A trend with one period draws nothing and says why, rather than a dot.
 
-MINIMALIST AUDIT
-[x] Deletion Test run. Removed: dashboard, hero banner, stat-tile row, chart
-    legend, icon-only navigation, and the second settings entry point.
-[x] Every remaining element answers: necessary / must look this way / needed now.
+NON-NEGOTIABLE DEFAULTS (§12)
+[x] Lighting: Auto / Light / Dark, defaulting to the device, persisted.
+[x] Font size: four steps, persisted.
+[x] Settings one tap away: gear in the top bar on desktop, last nav item on
+    mobile. The sheet scrolls, since it now carries the model dials too.
+[x] No flash of the wrong theme. The script that applies it runs before paint.
+    It is a FILE, not inline: under `script-src 'self'` the browser refuses
+    inline script, so in production the saved theme and font scale would have
+    been silently dropped on every load. Caught by serving the real policy in
+    the browser check.
 
-ACCESSIBILITY
-[x] Contrast verified in both modes. Keyboard path complete. Focus ring visible.
-[x] Skip-to-content link. Every icon-only button carries an aria-label.
-[x] Chart exposed as role="img" with a description, plus an sr-only data table.
-[x] Reduced motion respected - the ripple returns early, transitions collapse.
+ACCESSIBILITY (§13)
+[x] Skip link to main content.
+[x] Every icon-only control has an aria-label.
+[x] Charts have role="img" and an accessible description.
+[x] Nav uses aria-current="page".
+[x] No console errors and no policy refusals, in either theme.
 ```
 
-## What the verification actually found
+## What verification found, and what was done
 
-Three defects, each found by looking rather than by reading:
+Three defects on the shell, all found by looking rather than by reading:
+page-wide horizontal overflow from a screen-reader-only table, a duplicated
+settings entry point on mobile, and a settings sheet that could not be opened.
 
-1. **Horizontal page overflow in every state.** The chart's screen-reader data
-   table carried `sr-only`, but a table's min-content width beats `width: 1px`,
-   so it escaped its own clip and pushed the page to 503px on a 390px screen.
-   Fixed by moving the clip to a wrapper, where `overflow: hidden` can work.
-2. **Two settings entry points on mobile.** The top-bar gear used
-   `hidden sm:grid` against a base `display` utility — a specificity tie decided
-   by stylesheet order, not by intent. Fixed by hiding a wrapper instead.
-3. **The settings sheet could not be opened on mobile at all.** The nav handler
-   returned `undefined` for the settings item, swallowing the call that opens
-   it. Fixed, then proved: the sheet opens, both toggles apply live, both
-   persist, and both survive a reload with no flash of the wrong theme.
+Four more once the check drove the built app under the production policy:
 
-## Deliberate deviation
+1. **The theme script was inline** and would have been refused by the
+   content-security-policy in production — the saved theme and font scale lost
+   on every load, silently, with nothing failing. It is a file now.
+2. **A finding rendered twice** on the private-deal screen, hero and card.
+3. **The settings sheet could not scroll** once the model dials were added to
+   it, so the lower controls were unreachable on a phone.
+4. **No favicon**, so every load logged a 404 and the tab showed a default
+   globe.
 
-None. Where `design.md` supplies a file — `globals.css` §15, `useRipple` §16.1,
-`useAppearance` §16.2 — it was used as written rather than reinvented, with
-types added and storage access wrapped so a private window cannot throw.
+The check that found the first of those was itself decoration until the console
+listener came back: a policy refusal is reported to the console and nowhere
+else, so a check listening only for thrown errors cannot see the policy working
+or failing.
