@@ -34,6 +34,24 @@ sudo chown -R myanalyst:myanalyst /opt/myanalyst /var/lib/myanalyst /srv/myanaly
 **Never run `pip install` from source or `npm install` on the VM.** 1 GB of RAM
 will OOM. The wheel is built on the Lenovo and shipped.
 
+**Count before you add — `building` §3, rule 2.** The collector peaks at **132 MB
+RSS** on a realistic daily run, measured against a store holding 26,001 closes.
+It is a oneshot, so it adds no standing memory: the box carries a ten-second
+spike once a weekday, not a sixth resident service. Check there is room for that
+spike before the first deploy, and after anything else joins the box:
+
+```sh
+ssh pulse 'free -m; df -h /'
+```
+
+**Proceed only if `available` is at least 300 MB and the root filesystem has at
+least 1 GB free.** Below that, the answer is not swap: it is moving the
+collector to the Lenovo, or paying for an e2-small. Record the reading here:
+
+| Date | Available RAM | Free disk | Decision |
+|---|---|---|---|
+| _not yet taken_ | | | |
+
 ## 3. SECRETS
 
 Names only. No values in this document, ever.
@@ -43,8 +61,8 @@ Names only. No values in this document, ever.
 | `MYANALYST_DB` | Path to the DuckDB store | You choose it | `~/secrets/myanalyst.env` on the VM, mode 600 |
 | `MYANALYST_OUT` | Where the private JSON is written | `/srv/myanalyst/private` | same file |
 | `MYANALYST_WINDOW_DAYS` | Trading days of daily history kept | Default 400 | same file |
-| `TELEGRAM_BOT_TOKEN` | Alert channel, milestone 7 | BotFather | same file, not yet used |
-| `TELEGRAM_CHAT_ID` | Your chat | Telegram | same file, not yet used |
+| `TELEGRAM_BOT_TOKEN` | Alert channel for failures | BotFather | same file |
+| `TELEGRAM_CHAT_ID` | Your chat | Telegram | same file |
 
 The service runs as the `myanalyst` user and systemd reads this file as root
 before the sandbox applies, so it lives in the **service user's** home, not
@@ -56,7 +74,18 @@ ssh pulse 'sudo install -o myanalyst -g myanalyst -m 600 /dev/null /home/myanaly
 ssh pulse 'sudo ${EDITOR:-nano} /home/myanalyst/secrets/myanalyst.env'
 ```
 
-The collector needs no API key. It reads two public pages.
+The collector needs no API key to read its two sources. The Telegram pair is
+for alerts only, never a control plane, and without it a failed run is silent.
+
+**Fire the alert once, on purpose, before you trust it** (`developer` §13):
+
+```sh
+ssh pulse 'set -a; . ~/secrets/myanalyst.env; set +a;
+  /opt/myanalyst/current/.venv/bin/myanalyst-collect --test-alert'
+```
+
+Expect `test alert delivered` and a message on your phone. An alert nobody has
+seen arrive is not an alert.
 
 ## 4. FIRST-RUN
 
@@ -189,6 +218,11 @@ network is not offline-capable.
 ```sh
 ssh pulse '/opt/myanalyst/current/.venv/bin/myanalyst-collect --health --db /var/lib/myanalyst/prices.duckdb'
 ```
+
+The collector alerts on its own failures: a refused source, a price list that
+will not parse, an unexpected error, and a store that has stopped advancing.
+Prices are never discarded because the key rates failed, and a parse failure
+stores nothing rather than half a day.
 
 Success is exactly this, and exit code 0:
 

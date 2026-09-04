@@ -12,6 +12,7 @@ import logging
 import sys
 from pathlib import Path
 
+from . import alert
 from .cbk import fetch_rates
 from .nse import ParseFailed, SourceRefused, fetch_latest
 from .store import DAILY_WINDOW_DAYS, PriceStore
@@ -35,14 +36,20 @@ def collect(store: PriceStore, trade_date: dt.date, *, window: int, out_dir: Pat
     except SourceRefused as exc:
         log.error("source refused: %s", exc)
         store.log(trade_date, 0, "refused", str(exc))
+        alert.send(f"myAnalyst: NSE source refused on {trade_date}. {exc}")
         return 2
     except ParseFailed as exc:
         log.error("parse failed, nothing stored: %s", exc)
         store.log(trade_date, 0, "parse-failed", str(exc))
+        alert.send(
+            f"myAnalyst: NSE price list would not parse on {trade_date}, so nothing "
+            f"was stored. The page layout has probably changed. {exc}"
+        )
         return 3
     except Exception as exc:                      # network, HTTP, anything else
         log.exception("collection failed")
         store.log(trade_date, 0, "error", f"{type(exc).__name__}: {exc}")
+        alert.send(f"myAnalyst: collection failed on {trade_date}. {type(exc).__name__}: {exc}")
         return 4
 
     written = store.upsert(quotes)
@@ -98,6 +105,10 @@ def health(store: PriceStore, *, stale_after: int = 4) -> int:
     )
     if age > stale_after:
         log.error("HEALTH FAIL: newest close is %d days old, over the %d-day limit", age, stale_after)
+        alert.send(
+            f"myAnalyst: no new NSE close for {age} days (newest {last}). "
+            "The app is showing stale prices."
+        )
         return 1
     log.info("HEALTH OK")
     return 0
@@ -111,12 +122,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--date", default=None, help="trade date, YYYY-MM-DD; defaults to today")
     ap.add_argument("--prune-only", action="store_true", help="run the clean-up without fetching")
     ap.add_argument("--health", action="store_true", help="report state and exit non-zero if stale")
+    ap.add_argument("--test-alert", action="store_true",
+                    help="fire one alert on purpose, to prove the channel works")
     ap.add_argument("--stale-after", type=int, default=4,
                     help="days without a successful collection before health fails")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     trade_date = dt.date.fromisoformat(args.date) if args.date else dt.date.today()
+
+    if args.test_alert:
+        ok = alert.send("myAnalyst: test alert, fired on purpose. If you are reading this, the channel works.")
+        log.info("test alert %s", "delivered" if ok else "FAILED")
+        return 0 if ok else 1
 
     with PriceStore(args.db) as store:
         if args.health:
