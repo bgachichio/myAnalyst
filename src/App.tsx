@@ -1,18 +1,19 @@
 import { useState } from "react";
-import { BarChart3, BookOpen, Handshake, LineChart, Settings as SettingsIcon, Star } from "lucide-react";
+import { BarChart3, Handshake, LineChart, Settings as SettingsIcon, Star } from "lucide-react";
 import { AppShell, type NavItem } from "./components/AppShell";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { useAppearance } from "./hooks/useAppearance";
+import { useModel } from "./hooks/useModel";
 import { Analyse } from "./screens/Analyse";
+import { Compare } from "./screens/Compare";
 import { Private } from "./screens/Private";
-import { Placeholder } from "./screens/Placeholder";
+import { Watchlist } from "./screens/Watchlist";
 
 const ITEMS: NavItem[] = [
   { id: "analyse", label: "Analyse", icon: LineChart },
   { id: "private", label: "Private", icon: Handshake },
   { id: "watchlist", label: "Watchlist", icon: Star },
   { id: "compare", label: "Compare", icon: BarChart3 },
-  { id: "journal", label: "Journal", icon: BookOpen },
   { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
 
@@ -20,6 +21,7 @@ export default function App() {
   const [current, setCurrent] = useState("analyse");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { theme, setTheme, fontScale, setFontScale } = useAppearance();
+  const { model, set: setModel, reset: resetModel } = useModel();
 
   const openSettings = () => setSettingsOpen(true);
 
@@ -39,29 +41,10 @@ export default function App() {
         onNavigate={(id) => (id === "settings" ? openSettings() : setCurrent(id))}
         onOpenSettings={openSettings}
       >
-        {current === "analyse" && <Analyse />}
+        {current === "analyse" && <Analyse model={model} />}
         {current === "private" && <Private />}
-        {current === "watchlist" && (
-          <Placeholder
-            heading="Watchlist"
-            what="Counters you are holding or waiting on, with the dividend book-closure date and the last day to buy for it."
-            blockedBy="The collector has to run once against the live NSE page first."
-          />
-        )}
-        {current === "compare" && (
-          <Placeholder
-            heading="Compare"
-            what="Sector peers on the NSE, and cross-listed comparables, each showing the discount rate used on its side of the border."
-            blockedBy="Waiting on the comparables milestone."
-          />
-        )}
-        {current === "journal" && (
-          <Placeholder
-            heading="Journal"
-            what="Every verdict with the parameters and the price that produced it, so six months on you can read what you predicted against what happened."
-            blockedBy="It fills as you record analyses."
-          />
-        )}
+        {current === "watchlist" && <Watchlist />}
+        {current === "compare" && <Compare />}
       </AppShell>
 
       <SettingsSheet
@@ -71,6 +54,9 @@ export default function App() {
         setTheme={setTheme}
         fontScale={fontScale}
         setFontScale={setFontScale}
+        model={model}
+        setModel={setModel}
+        resetModel={resetModel}
       />
     </>
   );

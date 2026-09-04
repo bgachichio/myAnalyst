@@ -7,9 +7,8 @@
  * here requires a network either.
  */
 import { useEffect, useMemo, useState } from "react";
-import {
-  type Inputs, type Origin, type Parameters, type SectorProfile,
-} from "../lib/kernel";
+import { type Inputs, type Origin, type SectorProfile } from "../lib/kernel";
+import type { Model } from "../hooks/useModel";
 import { DEFAULT_MACRO, buildMemo, periodsFromReport, type Macro, type Period } from "../lib/memo";
 import { ageInDays, loadCollected, loadSeries, type Collected, type Observation } from "../lib/collected";
 import { Card, CardHeading } from "../components/ui/card";
@@ -18,8 +17,8 @@ import { Field, Select } from "../components/ui/field";
 import { ReportReader } from "../components/ReportReader";
 import { BLANK_FACTORS, DecisionFactors, type Factors } from "../components/DecisionFactors";
 import { MemoView } from "../components/MemoView";
-
-const DEFAULTS: Parameters = { r: 0.1375, g: 0.04, k: 0.35, n: 15, c: 0.026, w: 0.05, stress: 0.1 };
+import { newId, read, write } from "../lib/store";
+import type { SavedMemo } from "../lib/compare";
 
 const BLANK: Inputs = {
   net_profit_from_operations: 0, dividend_per_share_proposed: 0, cash_and_bank: 0,
@@ -74,7 +73,7 @@ const latest = (series: Record<string, Observation[]> | null, id: string): numbe
   return rows[rows.length - 1].value;
 };
 
-export function Analyse() {
+export function Analyse({ model }: { model: Model }) {
   const [name, setName] = useState("UNGA Group Limited");
   const [sector, setSector] = useState<SectorProfile>("industrial");
   const [inputs, setInputs] = useState<Inputs>(UNGA);
@@ -87,6 +86,7 @@ export function Analyse() {
   const [macro, setMacro] = useState<Macro>(DEFAULT_MACRO);
   const [factors, setFactors] = useState<Factors>(BLANK_FACTORS);
   const [collected, setCollected] = useState<Collected | null>(null);
+  const [savedName, setSavedName] = useState<string | null>(null);
 
   useEffect(() => {
     void loadCollected().then(setCollected);
@@ -120,12 +120,13 @@ export function Analyse() {
       return buildMemo({
         inputs,
         price: { amount: parsed, origin, note: note || undefined },
-        params: DEFAULTS, profile: sector, macro, periods,
+        params: model, profile: sector, macro, periods,
+        holdFloor: model.holdFloor,
       });
     } catch {
       return null;   // a half-typed number is not an error worth shouting about
     }
-  }, [inputs, parsed, origin, note, sector, macro, periods]);
+  }, [inputs, parsed, origin, note, sector, macro, periods, model]);
 
   const set = (key: keyof Inputs) => (raw: string) => {
     const n = Number(raw.replace(/,/g, ""));
@@ -138,6 +139,34 @@ export function Analyse() {
   };
 
   const groups = [...new Set(FIELDS.map((f) => f.group))];
+
+  /** Keep the memo's headline figures so it can be held against another one. */
+  const saveForComparison = () => {
+    if (!memo) return;
+    const row: SavedMemo = {
+      id: newId(),
+      savedAt: new Date().toISOString(),
+      name: name || "Untitled",
+      sector,
+      currency: "KES",
+      origin,
+      price: parsed,
+      discountRate: model.r,
+      growth: model.g,
+      verdict: memo.verdict,
+      margin: memo.base.margin,
+      evEbitda: memo.multiples.evEbitda,
+      priceToBook: memo.multiples.priceToBook,
+      trailingPe: memo.base.valuation.trailingPe,
+      netYield: memo.hurdles.netYield,
+      realYield: memo.hurdles.realYield,
+      energyTotal: memo.energy.total,
+      energyBand: memo.energy.band,
+      irr: memo.deal.irr,
+    };
+    write("memos", [...read<SavedMemo[]>("memos", []), row]);
+    setSavedName(row.name);
+  };
 
   return (
     <div className="flex flex-col gap-10">
@@ -163,11 +192,21 @@ export function Analyse() {
           </Button>
           <Button variant="outlined" onClick={() => {
             setInputs(BLANK); setPrior({}); setPrice(""); setName(""); setNote(""); setSource(null);
-            setFactors(BLANK_FACTORS);
+            setFactors(BLANK_FACTORS); setSavedName(null);
           }}>
             Start blank
           </Button>
+          {memo && (
+            <Button variant="tonal" onClick={saveForComparison}>
+              Save to compare
+            </Button>
+          )}
         </div>
+        {savedName && (
+          <p role="status" className="text-[0.8125rem] text-on-surface-variant">
+            {savedName} saved. It is on the Compare screen, restated onto whatever rate you set there.
+          </p>
+        )}
       </section>
 
       <ReportReader

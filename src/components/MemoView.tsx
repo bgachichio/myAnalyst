@@ -109,6 +109,24 @@ export function MemoView({ memo, sector }: { memo: Memo; sector: string }) {
         </div>
       </Card>
 
+      {/* The price, and the parts of it the model takes apart. */}
+      <Card>
+        <div className="flex flex-col gap-3">
+          <CardHeading>What the price buys</CardHeading>
+          <Row label="Entry price, including costs">{money(base.valuation.entryPrice)}</Row>
+          <Row label="Future earnings per share">{money(base.valuation.myFutureEps)}</Row>
+          <Row label="Value of them, after the margin of safety">{money(base.valuation.myValuation)}</Row>
+          <Row label="Present value of dividends">{money(base.valuation.pvDividendsPs)}</Row>
+          <Row label="Cash per share">{money(base.valuation.cashPs)}</Row>
+          <Row label="Market's price of future earnings">{money(base.valuation.marketPriceFe)}</Row>
+          <Row label="Net dividend per share">{money(base.valuation.netDividendPs)}</Row>
+          <p className="text-[0.8125rem] leading-6 text-on-surface-variant pt-2 max-w-[68ch]">
+            Priced at {base.valuation.provenance}. Transaction costs load the entry and never the
+            valuation, which is why the two sides of the comparison stay honest.
+          </p>
+        </div>
+      </Card>
+
       {/* (v) the private equity view */}
       <Card>
         <div className="flex flex-col gap-3">

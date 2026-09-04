@@ -163,6 +163,59 @@ try {
   check("no page errors on the private screen", problems.length === 0, problems.join(" | "));
 
   await page.close();
+
+  // The watchlist and the comparison table, which both remember across visits.
+  const kept = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const keptProblems = [];
+  kept.on("pageerror", (e) => keptProblems.push(e.message));
+  await kept.goto(base, { waitUntil: "networkidle" });
+
+  await kept.getByRole("button", { name: "Save to compare" }).click();
+  await kept.getByRole("button", { name: "Compare", exact: true }).click();
+  const savedLine = await kept.locator(".display-sm").first().textContent();
+  check("a memo saved from the analysis reaches the comparison", savedLine.trim() === "1 saved", savedLine.trim());
+  const quoted = await kept.locator("text=/EV\\/EBITDA as quoted/").count();
+  check("the comparison shows the multiple as quoted and restated", quoted === 1, `${quoted} rows`);
+
+  await kept.getByRole("button", { name: "Watchlist", exact: true }).click();
+  await kept.getByLabel("Company").fill("UNGA Group Limited");
+  await kept.getByLabel("Books closure date").fill("2030-06-04");
+  await kept.getByLabel("Dividend per share").fill("1");
+  await kept.getByLabel("Shares held or intended").fill("10000");
+  await kept.getByRole("button", { name: "Add to the watchlist" }).click();
+
+  const buyBy = await kept.locator("text=/The NSE settles 3 trading days/").first().textContent();
+  check("the watchlist derives the last day to buy from the closure date",
+        buyBy.includes("2030-05-30"), buyBy.trim());
+
+  // Reload: what the app remembers has to survive the tab closing.
+  await kept.reload({ waitUntil: "networkidle" });
+  const remembered = await kept.locator("text=/UNGA Group Limited/").count();
+  check("the watchlist survives a reload", remembered >= 1, `${remembered} entries`);
+  check("no page errors on the watchlist or comparison", keptProblems.length === 0, keptProblems.join(" | "));
+
+  // The transaction cost slider, which loads the entry price and nothing else.
+  await kept.getByRole("button", { name: "Analyse", exact: true }).click();
+  const costBefore = (await kept.locator('xpath=//span[text()="Entry price, including costs"]/following-sibling::span').textContent()).trim();
+
+  await kept.getByRole("button", { name: "Settings" }).first().click();
+  const slider = kept.getByLabel("NSE transaction costs");
+  check("the transaction cost is a slider", await slider.getAttribute("type") === "range",
+        await slider.getAttribute("type"));
+  check("it runs 0% to 10%",
+        await slider.getAttribute("min") === "0" && await slider.getAttribute("max") === "0.1",
+        `${await slider.getAttribute("min")} to ${await slider.getAttribute("max")}`);
+  await slider.fill("0.1");
+  await kept.getByRole("button", { name: "Close settings" }).click();
+
+  const costAfter = (await kept.locator('xpath=//span[text()="Entry price, including costs"]/following-sibling::span').textContent()).trim();
+  check("moving it changes the price actually paid", costAfter !== costBefore, `${costBefore} then ${costAfter}`);
+
+  await kept.reload({ waitUntil: "networkidle" });
+  const costKept = (await kept.locator('xpath=//span[text()="Entry price, including costs"]/following-sibling::span').textContent()).trim();
+  check("the setting survives a reload", costKept === costAfter, `${costAfter} then ${costKept}`);
+
+  await kept.close();
 } finally {
   await browser.close();
   server.close();
