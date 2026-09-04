@@ -28,6 +28,9 @@ export interface Line {
   numbers: NumberToken[];
 }
 
+/** Mirrors the kernel's sector profiles; a statement's shape follows from it. */
+export type Profile = "industrial" | "insurer" | "bank" | "property" | "telco";
+
 export type FigureKey =
   | "net_profit_from_operations"
   | "dividend_per_share_proposed"
@@ -89,6 +92,22 @@ export const FLOOR = 0.4;
 
 // ---------------------------------------------------------------- text
 
+/**
+ * The label a rule is matched against: normalised, then stripped of the note
+ * reference that numbers the row.
+ *
+ * A Kenyan bank's statement numbers every line - "21 TOTALASSETS", "6.8 Total
+ * Other Operating Expenses", "10 Current tax". Matching those against a rule
+ * anchored at the start of the label fails on every one of them, which is most
+ * of why the first real bank report read three figures out of twelve.
+ */
+export function labelOf(text: string): string {
+  return normalise(text)
+    .replace(/^[a-z] /, "")                 // a section marker: "A ASSETS"
+    .replace(/^\d+(?:\.\d+)? /, "")         // a note reference: "21 ", "6.8 "
+    .trim();
+}
+
 /** Lower case, single spaces, no punctuation that changes nothing. */
 export function normalise(text: string): string {
   return text
@@ -106,13 +125,28 @@ export function normalise(text: string): string {
  */
 export function parseNumbers(text: string): NumberToken[] {
   const out: NumberToken[] = [];
-  const re = /\(?\s*-?\s*(?:\d{1,3}(?:[,\s]\d{3})+|\d+)(?:\.\d+)?\s*\)?%?/g;
+  // A figure is negative in brackets, or with a minus touching the digits.
+  // A dash standing on its own is a nil marker - "DIVIDEND PER SHARE - (KSHS)
+  // - 3.75 - -" pays 3.75, not minus 3.75, and reading it as negative flips
+  // the sign on a real dividend.
+  //
+  // Commas group thousands; a space never does. Two columns of a table are
+  // separated by spaces, so allowing a space as a separator glues them into
+  // one wrong number.
+  const GROUPED = String.raw`\d{1,3}(?:,\d{3})+(?:\.\d+)?`;
+  const PLAIN = String.raw`\d+(?:\.\d+)?`;
+  const re = new RegExp(
+    String.raw`\(\s*(?:${GROUPED}|${PLAIN})\s*\)` +   // (1,234) - negative
+    String.raw`|-(?:${GROUPED}|${PLAIN})` +              // -1,234  - negative
+    String.raw`|(?:${GROUPED}|${PLAIN})%?`,              // 1,234   - plain
+    "g",
+  );
   let match: RegExpExecArray | null;
   let column = 0;
   while ((match = re.exec(text)) !== null) {
     const raw = match[0].trim();
     if (raw.endsWith("%")) continue;               // a ratio is not a figure
-    const negative = raw.startsWith("(") || /^-|\(\s*-/.test(raw);
+    const negative = raw.startsWith("(") || raw.startsWith("-");
     const digits = raw.replace(/[()%\s,]/g, "").replace(/^-/, "");
     if (digits === "") continue;
     const magnitude = Number(digits);
@@ -136,6 +170,25 @@ const SCALES: { re: RegExp; scale: number; label: string }[] = [
   { re: /\bthousands?\b|'000\b|\b000s?\b/, scale: 1e3, label: "thousands" },
 ];
 
+/** Currency markers that turn a word like "millions" into a units declaration. */
+const CURRENCY_NEAR = /\b(kshs?|ksh|kes|shs|sh|usd|eur|gbp|figures|amounts|stated|expressed|all)\b/;
+
+/**
+ * Is this line declaring the units, or just using the word?
+ *
+ * "Connecting millions of Kenyans to what matters most" is a sentence from a
+ * results booklet, and reading it as a units declaration multiplied every
+ * figure in the document by a million. A declaration is short, or it sits
+ * beside a currency marker. A sentence is neither.
+ */
+function declaresUnits(text: string, re: RegExp): boolean {
+  if (text.length <= 30) return true;               // "in thousands", "kshs '000"
+  const at = text.search(re);
+  if (at < 0) return false;
+  const window = text.slice(Math.max(0, at - 20), at + 20);
+  return CURRENCY_NEAR.test(window);
+}
+
 /**
  * Kenyan reports almost always state figures in thousands and say so once, in
  * small type above the first column. Missing that multiplies every figure by a
@@ -147,7 +200,7 @@ export function detectScale(lines: Line[]): { scale: number; note: string } {
     const t = normalise(line.text);
     if (t.length > 120) continue;                   // a paragraph, not a column header
     for (const s of SCALES) {
-      if (s.re.test(t)) {
+      if (s.re.test(t) && declaresUnits(t, s.re)) {
         const seen = counts.get(s.scale) ?? { n: 0, label: s.label, where: line.text.trim() };
         counts.set(s.scale, { ...seen, n: seen.n + 1 });
         break;
@@ -165,19 +218,72 @@ export function detectScale(lines: Line[]): { scale: number; note: string } {
   return { scale, note };
 }
 
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun",
+                "jul", "aug", "sep", "oct", "nov", "dec"];
+
 /**
- * Which column is the current period. Reports usually put it first, but not
- * always, and reading the prior year as the current one is a silent, total
- * failure of the whole tool.
+ * Which column is the current period, and how many columns there are.
+ *
+ * Reading the prior year as the current one is a silent, total failure of the
+ * whole tool, and the header that gives it away is rarely two bare years. A
+ * Kenyan bank's half-year statement heads its columns
+ * "JUN 2025 · DEC 2025 · MAR 2026 · JUN 2026" - oldest first, years repeating,
+ * four of them, and eight once the company and the group are side by side. So
+ * the header is read as a sequence and its direction inferred, rather than
+ * matched against a shape.
  */
-export function detectPeriods(lines: Line[]): { years: number[]; currentIsFirst: boolean } {
-  for (const line of lines) {
-    const years = line.numbers.filter((n) => n.looksLikeYear).map((n) => n.value);
-    if (years.length >= 2 && years[0] !== years[1]) {
-      return { years, currentIsFirst: years[0] > years[1] };
-    }
+/**
+ * Which way a run of period keys points, or null if it says nothing.
+ *
+ * A statement that prints the company and the group side by side repeats its
+ * whole header - four columns, then the same four again - so the sequence is
+ * not monotonic overall and reads as noise unless the repeat is recognised.
+ */
+function readDirection(keys: number[]): "newest first" | "oldest first" | null {
+  const rising = keys.every((k, i) => i === 0 || k >= keys[i - 1]);
+  const falling = keys.every((k, i) => i === 0 || k <= keys[i - 1]);
+  if (rising !== falling) return falling ? "newest first" : "oldest first";
+  if (rising && falling) return null;                       // every key equal
+
+  // Not monotonic: split into maximal runs and accept only if they are all the
+  // same length and all point the same way.
+  const runs: number[][] = [[keys[0]]];
+  for (let i = 1; i < keys.length; i += 1) {
+    const run = runs[runs.length - 1];
+    const grew = keys[i] >= run[run.length - 1];
+    const runGrows = run.length === 1 ? grew : run[1] >= run[0];
+    if (grew === runGrows) run.push(keys[i]);
+    else runs.push([keys[i]]);
   }
-  return { years: [], currentIsFirst: true };
+  if (runs.length < 2) return null;
+  const size = runs[0].length;
+  if (size < 2 || !runs.every((r) => r.length === size)) return null;
+  const directions = new Set(runs.map((r) => (r[r.length - 1] >= r[0] ? "oldest first" : "newest first")));
+  if (directions.size !== 1) return null;
+  return [...directions][0] as "newest first" | "oldest first";
+}
+
+export function detectPeriods(lines: Line[]): { years: number[]; currentIsFirst: boolean } {
+  let best: { years: number[]; currentIsFirst: boolean } | null = null;
+
+  for (const line of lines.slice(0, 400)) {
+    const years = line.numbers.filter((n) => n.looksLikeYear).map((n) => n.value);
+    if (years.length < 2) continue;
+
+    // Months disambiguate columns inside the same year.
+    const months = [...normalise(line.text).matchAll(/\b([a-z]{3})[a-z]*\b/g)]
+      .map((m) => MONTHS.indexOf(m[1]))
+      .filter((i) => i >= 0);
+    const keys = years.map((y, i) => y * 12 + (months[i] ?? 0));
+
+    const direction = readDirection(keys);
+    if (direction === null) continue;          // flat or unordered: says nothing
+
+    const found = { years, currentIsFirst: direction === "newest first" };
+    // The header with the most columns is the one describing the table.
+    if (!best || years.length > best.years.length) best = found;
+  }
+  return best ?? { years: [], currentIsFirst: true };
 }
 
 // ---------------------------------------------------------------- labels
@@ -311,6 +417,84 @@ const SPECS: Record<FigureKey, Spec> = {
   },
 };
 
+/**
+ * What a bank's statement calls things, and what it does not have at all.
+ *
+ * A bank has no current assets and no non-current assets: it publishes TOTAL
+ * ASSETS and TOTAL LIABILITIES and stops. Reading a bank with the industrial
+ * label table finds three figures out of twelve, which is what happened to the
+ * first real report put through this.
+ *
+ * The mapping is deliberate and is printed on the memo: total assets stand in
+ * for current assets, total liabilities for current liabilities, and the
+ * non-current pair is zero. Net capital then comes out as total assets less
+ * total liabilities, which is the bank's equity - the figure net asset value
+ * per share actually needs. The liquidity ratio it also produces is
+ * meaningless for a bank, and the fragility sheet already suppresses the ratio
+ * that would mislead.
+ */
+const SECTOR_RULES: Partial<Record<Profile, Partial<Record<FigureKey, Rule[]>>>> = {
+  bank: {
+    net_profit_from_operations: [
+      { re: /^profit after tax,? exceptional items and non[- ]?controlling interest/, score: 0.97 },
+      { re: /^profit after tax and exceptional items/, score: 0.93 },
+      { re: /^profit after exceptional items/, score: 0.9 },
+      { re: /\bprofit after tax\b/, score: 0.88 },
+    ],
+    total_income: [
+      { re: /^total operating income/, score: 0.97 },
+      { re: /^total interest income/, score: 0.7 },
+      { re: /^\d+(?:\.\d+)? total operating income/, score: 0.95 },
+    ],
+    total_expenses: [
+      { re: /^total other operating expenses/, score: 0.97 },
+      { re: /^total operating expenses/, score: 0.95 },
+      { re: /^\d+(?:\.\d+)? total other operating expenses/, score: 0.95 },
+    ],
+    current_assets: [
+      { re: /^total ?assets\b/, score: 0.95 },
+      { re: /^\d+ total ?assets\b/, score: 0.93 },
+    ],
+    current_liabilities: [
+      { re: /^total liabilities\b/, score: 0.95 },
+      { re: /^\d+ total liabilities\b/, score: 0.93 },
+    ],
+    cash_and_bank: [
+      { re: /^cash both local and foreign/, score: 0.95 },
+      { re: /^cash and balances (?:due from|with) (?:the )?central bank/, score: 0.93 },
+      { re: /^balances due from central bank/, score: 0.85 },
+    ],
+    cash_and_securities: [
+      { re: /^kenya government (?:and other )?securities/, score: 0.9 },
+      { re: /^investment securities/, score: 0.85 },
+    ],
+    income_tax_expense: [
+      { re: /^current tax\b/, score: 0.9 },
+    ],
+  },
+  insurer: {
+    total_income: [
+      { re: /^gross (?:written )?premium/, score: 0.9 },
+      { re: /^total income/, score: 0.95 },
+    ],
+    total_expenses: [
+      { re: /^total (?:claims and )?(?:benefits and )?expenses/, score: 0.95 },
+    ],
+  },
+};
+
+/** Figures a sector genuinely does not report. Taken as zero, and said so. */
+const SECTOR_ZEROES: Partial<Record<Profile, FigureKey[]>> = {
+  bank: ["non_current_assets", "non_current_liabilities"],
+};
+
+/** Earnings per share, used only to derive a share count nobody printed. */
+const EPS_RULES: Rule[] = [
+  { re: /^earnings? per share/, score: 0.95 },
+  { re: /^basic (?:and diluted )?earnings? per share/, score: 0.95 },
+  { re: /\bearnings? per share\b/, score: 0.85 },
+];
+
 // ---------------------------------------------------------------- reading
 
 interface Hit {
@@ -333,7 +517,12 @@ interface Hit {
 export function pickNumber(
   line: Line, currentIsFirst: boolean, periods: number,
 ): { current: NumberToken; prior: NumberToken | null } | null {
-  const usable = line.numbers.filter((n) => !n.looksLikeYear);
+  let usable = line.numbers.filter((n) => !n.looksLikeYear);
+
+  // The note reference that was stripped off the label is still sitting in the
+  // numbers. Drop it, and if nothing is left the line is a note heading -
+  // "11 CASH AND CASH EQUIVALENTS" - which has a label and no figure at all.
+  if (startsWithNoteReference(line.text) && usable.length > 0) usable = usable.slice(1);
   if (usable.length === 0) return null;
 
   // Bare small integers on the left, in excess of the period columns, are note
@@ -348,28 +537,51 @@ export function pickNumber(
     : { current: columns[columns.length - 1], prior: columns[columns.length - 2] ?? null };
 }
 
+/** Does the line open with the number that enumerates it, rather than a figure? */
+export const startsWithNoteReference = (text: string): boolean =>
+  /^\s*(?:[A-Za-z]\s+)?\d+(?:\.\d+)?\s+\D/.test(text);
+
 const isNoteReference = (token: NumberToken): boolean =>
   Number.isInteger(token.value) &&
   Math.abs(token.value) < 1000 &&
   !/[,.]/.test(token.raw);
 
 /** Read every figure the label table can find, with a confidence on each. */
-export function extract(lines: Line[]): Extraction {
+export function extract(lines: Line[], profile: Profile = "industrial"): Extraction {
   const { scale, note: scaleNote } = detectScale(lines);
   const { years, currentIsFirst } = detectPeriods(lines);
   // Two columns is the shape of every statement that states a comparative.
   const periods = Math.max(years.length, 2);
   const notes: string[] = [];
 
+  const overlay = SECTOR_RULES[profile] ?? {};
+  const zeroes = new Set(SECTOR_ZEROES[profile] ?? []);
+
   const hits: Record<string, Hit[]> = {};
+  const epsHits: Hit[] = [];
   for (const line of lines) {
-    const label = normalise(line.text);
+    const label = labelOf(line.text);
     if (!label) continue;
+
+    let epsBest = 0;
+    for (const rule of EPS_RULES) if (rule.re.test(label)) epsBest = Math.max(epsBest, rule.score);
+    if (epsBest > 0 && !/dividend/.test(label)) {
+      const picked = pickNumber(line, currentIsFirst, periods);
+      // A per-share figure is small. Anything large on that line is a note
+      // reference or a total that wandered in.
+      if (picked && Math.abs(picked.current.value) > 0 && Math.abs(picked.current.value) < 1000) {
+        epsHits.push({ score: epsBest, value: picked.current.value, prior: null,
+                       label: line.text.trim(), page: line.page, column: picked.current.column });
+      }
+    }
+
     for (const key of FIGURE_KEYS) {
+      if (zeroes.has(key)) continue;
       const spec = SPECS[key];
       if (spec.reject?.some((r) => r.test(label))) continue;
       let best = 0;
       for (const rule of spec.rules) if (rule.re.test(label)) best = Math.max(best, rule.score);
+      for (const rule of overlay[key] ?? []) if (rule.re.test(label)) best = Math.max(best, rule.score);
       if (best === 0) continue;
       const picked = pickNumber(line, currentIsFirst, periods);
       if (!picked) continue;
@@ -388,6 +600,14 @@ export function extract(lines: Line[]): Extraction {
   const missing: FigureKey[] = [];
 
   for (const key of FIGURE_KEYS) {
+    if (zeroes.has(key)) {
+      candidates[key] = {
+        key, value: 0, rawValue: 0, priorValue: 0, scale: 1, confidence: 1,
+        label: `A ${profile} does not report this; taken as zero.`,
+        page: "by sector", column: 0, alternatives: [],
+      };
+      continue;
+    }
     const found = (hits[key] ?? []).slice().sort((a, b) => b.score - a.score);
     if (found.length === 0) {
       missing.push(key);
@@ -442,12 +662,47 @@ export function extract(lines: Line[]): Extraction {
     };
   }
 
+  // A bank publishes earnings per share and not the share count. Profit
+  // divided by earnings per share recovers it, and the memo says that is where
+  // it came from rather than presenting it as something that was read.
+  if (!candidates.shares_issued && epsHits.length > 0) {
+    const profit = candidates.net_profit_from_operations?.value;
+    const eps = epsHits.sort((a, b) => b.score - a.score)[0];
+    if (profit && eps.value !== 0) {
+      const shares = Math.round(profit / eps.value);
+      if (shares > 0 && Number.isFinite(shares)) {
+        candidates.shares_issued = {
+          key: "shares_issued", value: shares, rawValue: shares, priorValue: null,
+          scale: 1, confidence: 0.55,
+          label: `Derived: profit ÷ ${eps.value} earnings per share, from "${eps.label}"`,
+          page: eps.page, column: eps.column, alternatives: [],
+        };
+        const at = missing.indexOf("shares_issued");
+        if (at >= 0) missing.splice(at, 1);
+        notes.push(
+          `Shares issued was not printed, so it is profit divided by earnings per share ` +
+          `of ${eps.value}: ${shares.toLocaleString("en-GB")}. Check it against the register.`,
+        );
+      }
+    }
+  }
+
+  // Always say which column was taken. The reader can check it in one glance,
+  // and reading the wrong period is the one failure that looks like an answer.
+  if (years.length >= 2) {
+    notes.push(
+      `${years.length} period columns detected (${years.join(", ")}); the ` +
+      `${currentIsFirst ? "first" : "last"} was read as the current one.`,
+    );
+  }
+
   if (!currentIsFirst && years.length >= 2) {
     notes.push(`Columns run oldest first (${years.join(", ")}), so the last column was read as the current period.`);
   }
   notes.push(...reconcile(candidates));
 
-  return { candidates, missing, notes, scale, scaleNote, currentIsFirstColumn: currentIsFirst, periodYears: years };
+  return { candidates, missing, notes, scale, scaleNote,
+           currentIsFirstColumn: currentIsFirst, periodYears: years };
 }
 
 /**

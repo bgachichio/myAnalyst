@@ -74,12 +74,14 @@ const latest = (series: Record<string, Observation[]> | null, id: string): numbe
 };
 
 export function Analyse({ model }: { model: Model }) {
-  const [name, setName] = useState("UNGA Group Limited");
+  // Opens blank. A worked example on screen at every launch is a company you
+  // are not analysing, and its figures are one mistaken tap from a memo.
+  const [name, setName] = useState("");
   const [sector, setSector] = useState<SectorProfile>("industrial");
-  const [inputs, setInputs] = useState<Inputs>(UNGA);
+  const [inputs, setInputs] = useState<Inputs>(BLANK);
   const [prior, setPrior] = useState<Partial<Inputs>>({});
   const [periodLabels, setPeriodLabels] = useState({ current: "Latest", prior: "Prior" });
-  const [price, setPrice] = useState("28");
+  const [price, setPrice] = useState("");
   const [origin, setOrigin] = useState<Origin>("manual");
   const [note, setNote] = useState("");
   const [source, setSource] = useState<string | null>(null);
@@ -87,6 +89,9 @@ export function Analyse({ model }: { model: Model }) {
   const [factors, setFactors] = useState<Factors>(BLANK_FACTORS);
   const [collected, setCollected] = useState<Collected | null>(null);
   const [savedName, setSavedName] = useState<string | null>(null);
+  const [recent, setRecent] = useState<SavedMemo[]>(
+    () => read<SavedMemo[]>("memos", []).slice(-5).reverse(),
+  );
 
   useEffect(() => {
     void loadCollected().then(setCollected);
@@ -164,7 +169,9 @@ export function Analyse({ model }: { model: Model }) {
       energyBand: memo.energy.band,
       irr: memo.deal.irr,
     };
-    write("memos", [...read<SavedMemo[]>("memos", []), row]);
+    const all = [...read<SavedMemo[]>("memos", []), row];
+    write("memos", all);
+    setRecent(all.slice(-5).reverse());
     setSavedName(row.name);
   };
 
@@ -207,9 +214,49 @@ export function Analyse({ model }: { model: Model }) {
             {savedName} saved. It is on the Compare screen, restated onto whatever rate you set there.
           </p>
         )}
+
+        {/* The last five, so picking up yesterday's work is one tap and not a
+            retype. Loading one restores what was analysed, not the memo: the
+            figures are the thing worth keeping. */}
+        {recent.length > 0 && !memo && (
+          <div className="flex flex-col gap-2 pt-2">
+            <p className="text-[0.75rem] tracking-[0.03em] uppercase text-on-surface-variant">
+              Recent
+            </p>
+            <ul className="flex flex-col">
+              {recent.map((m) => (
+                <li key={m.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setName(m.name);
+                      setSector(m.sector as SectorProfile);
+                      setPrice(String(m.price));
+                      setOrigin(m.origin as Origin);
+                      setSource(null);
+                    }}
+                    className="state-layer w-full min-h-14 px-3 -mx-3 rounded-[12px] flex items-baseline
+                               justify-between gap-4 text-left
+                               focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                  >
+                    <span className="text-[0.9375rem] text-on-surface">{m.name}</span>
+                    <span className="text-[0.8125rem] tabular-nums text-on-surface-variant shrink-0">
+                      {m.verdict} · {m.savedAt.slice(0, 10)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[0.6875rem] leading-5 text-on-surface-variant max-w-[68ch]">
+              Reopens the company, sector and price. The figures come back by reading the
+              report again, which is faster than trusting a copy of them.
+            </p>
+          </div>
+        )}
       </section>
 
       <ReportReader
+        profile={sector}
         onApply={(figures, from) => {
           setInputs((prev) => ({ ...prev, ...figures.current }));
           setPrior(figures.prior);

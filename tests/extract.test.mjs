@@ -167,3 +167,67 @@ test("a line with one column offers no comparative", () => {
   assert.equal(got.candidates.total_income.value, 19_864_152);
   assert.equal(got.candidates.total_income.priorValue, null);
 });
+
+// --- a bank's statement, from the real thing -------------------------------
+const bank = read("bank-statement-lines.json");
+const BANK_LINES = bank.pages.flatMap((p) =>
+  p.lines.map((text) => ({ page: p.page, text, numbers: parseNumbers(text) })),
+);
+
+test("a bank read as a bank finds every figure", () => {
+  const got = extract(BANK_LINES, bank.profile);
+  assert.equal(got.scale, bank.expect_scale);
+  assert.equal(got.periodYears.length, bank.expect_columns);
+  assert.equal(got.currentIsFirstColumn, bank.expect_current_is_first);
+  for (const [key, want] of Object.entries(bank.expect)) {
+    assert.equal(got.candidates[key]?.value, want, `${key} off "${got.candidates[key]?.label}"`);
+  }
+  assert.deepEqual(got.missing, []);
+});
+
+test("a bank read as a miller finds almost nothing, which is why the sector is asked for", () => {
+  const wrong = extract(BANK_LINES, "industrial");
+  const right = extract(BANK_LINES, "bank");
+  assert.ok(wrong.missing.length >= 5, `only ${wrong.missing.length} missing`);
+  assert.ok(right.missing.length < wrong.missing.length);
+});
+
+test("the share count is derived where the statement never printed one", () => {
+  const got = extract(BANK_LINES, "bank");
+  const shares = got.candidates.shares_issued;
+  // Profit after tax and minorities over earnings per share. I&M's own paid-up
+  // capital is 1,740,121 thousand shares, so this lands within a tenth of a per cent.
+  assert.ok(Math.abs(shares.value - bank.expect_derived_shares_near) / bank.expect_derived_shares_near < 0.01);
+  assert.match(shares.label, /Derived/);
+  assert.ok(shares.confidence < CONFIDENT, "a derived figure must be offered for checking");
+  assert.ok(got.notes.some((n) => n.includes("divided by earnings per share")));
+});
+
+test("a nil dash is not a minus sign", () => {
+  const line = "19 DIVIDEND PER SHARE - (KSHS) - 3.75 - - - 3.75 - -";
+  assert.deepEqual(parseNumbers(line).map((n) => n.value), [19, 3.75, 3.75]);
+});
+
+test("two columns separated by a space are two numbers, never one", () => {
+  assert.deepEqual(parseNumbers("Total 1 234").map((n) => n.value), [1, 234]);
+  assert.deepEqual(parseNumbers("Total 1,234").map((n) => n.value), [1234]);
+});
+
+test("a word in a sentence is not a units declaration", () => {
+  const prose = detectScale([{ page: "p", text: "Connecting millions of Kenyans to what matters most.", numbers: [] }]);
+  assert.equal(prose.scale, 1);
+  const real = detectScale([{ page: "p", text: "All figures in KShs millions", numbers: [] }]);
+  assert.equal(real.scale, 1_000_000);
+});
+
+test("a header whose block repeats still says which column is current", () => {
+  const header = "JUN 2025 DEC 2025 MAR 2026 JUN 2026 JUN 2025 DEC 2025 MAR 2026 JUN 2026";
+  const got = detectPeriods([{ page: "p", text: header, numbers: parseNumbers(header) }]);
+  assert.equal(got.years.length, 8);
+  assert.equal(got.currentIsFirst, false);
+});
+
+test("a note heading has a label and no figure", () => {
+  const got = extract([{ page: "p", text: "11  CASH AND CASH EQUIVALENTS", numbers: parseNumbers("11  CASH AND CASH EQUIVALENTS") }]);
+  assert.equal(got.candidates.cash_and_securities, undefined);
+});

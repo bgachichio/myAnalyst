@@ -10,7 +10,7 @@ import { useRef, useState } from "react";
 import { AlertTriangle, Check, FileText, X } from "lucide-react";
 import {
   CONFIDENT, FIGURE_KEYS, extract, labelFor,
-  type Candidate, type Extraction, type FigureKey,
+  type Candidate, type Extraction, type FigureKey, type Profile,
 } from "../lib/extract";
 import type { Inputs } from "../lib/kernel";
 import { Button } from "./ui/button";
@@ -31,6 +31,8 @@ export interface ReadFigures {
 
 interface Props {
   onApply: (figures: ReadFigures, source: string) => void;
+  /** A bank's statement has no current assets and calls its income something else. */
+  profile: Profile;
 }
 
 /** The report's own year headings where it gave them, and honest placeholders where it did not. */
@@ -45,7 +47,7 @@ function periodLabels(got: Extraction): { current: string; prior: string } {
 const money = (n: number) =>
   n.toLocaleString("en-GB", { maximumFractionDigits: Math.abs(n) < 1000 ? 2 : 0 });
 
-export function ReportReader({ onApply }: Props) {
+export function ReportReader({ onApply, profile }: Props) {
   const [phase, setPhase] = useState<Phase>({ at: "idle" });
   const input = useRef<HTMLInputElement>(null);
 
@@ -58,7 +60,7 @@ export function ReportReader({ onApply }: Props) {
             setPhase({ at: "reading", what: `${file.name}, page ${p.page} of ${p.pages}` }))
         : await (await import("../lib/xlsx")).readXlsx(file);
 
-      const got = extract(lines);
+      const got = extract(lines, profile);
       const chosen: Record<string, number> = {};
       for (const c of Object.values(got.candidates) as Candidate[]) chosen[c.key] = c.value;
 
@@ -103,6 +105,8 @@ export function ReportReader({ onApply }: Props) {
         <p className="text-[0.875rem] leading-6 text-on-surface-variant max-w-[68ch]">
           A published annual report, half-year statement, or a spreadsheet. It is read here, in the
           browser: nothing is uploaded, and every figure it offers shows the line it came from.
+          Set the sector first — a bank's statement has no current assets and calls its income
+          something else, and reading one as a miller finds three figures out of twelve.
         </p>
 
         <input

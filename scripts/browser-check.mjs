@@ -124,6 +124,12 @@ try {
     const { problems, csp, missing } = collect(page);
 
     await page.goto(base, { waitUntil: "networkidle" });
+
+    const opening = (await page.locator(".display-sm").first().textContent()).trim();
+    check(`${theme}: opens blank, not on somebody else's company`,
+          opening === "Enter the figures", opening);
+
+    await page.getByRole("button", { name: "Load worked example" }).click();
     const verdict = (await page.locator(".display-sm").first().textContent()).trim();
     check(`${theme}: the worked example reaches a verdict`,
           ["BUY", "HOLD", "SELL"].includes(verdict), verdict);
@@ -176,7 +182,6 @@ try {
   check("the production policy reaches the browser",
         policy.includes("script-src 'self'"), policy.slice(0, 60) + "…");
 
-  await page.getByRole("button", { name: "Start blank" }).click();
   await page.locator('input[type="file"]').setInputFiles(join(ROOT, "..", "fixtures", "statement.pdf"));
   await page.getByRole("button", { name: "Use these figures" }).waitFor({ timeout: 30_000 });
 
@@ -188,6 +193,7 @@ try {
 
   await page.getByRole("button", { name: "Use these figures" }).click();
   await page.getByLabel("Price per share").fill("28");
+  await page.getByLabel("Company").fill("UNGA Group Limited");
 
   const after = await page.locator(".display-sm").first().textContent();
   check("the figures read from the PDF produce a verdict", ["BUY", "HOLD", "SELL"].includes(after.trim()), after.trim());
@@ -230,6 +236,10 @@ try {
   const { problems: keptProblems, csp: keptCsp } = collect(kept);
   await kept.goto(base, { waitUntil: "networkidle" });
 
+  const noRecent = await kept.locator("text=/^Recent$/").count();
+  check("a first run shows no recent list", noRecent === 0, `${noRecent} lists`);
+
+  await kept.getByRole("button", { name: "Load worked example" }).click();
   await kept.getByRole("button", { name: "Save to compare" }).click();
   await kept.getByRole("button", { name: "Compare", exact: true }).click();
   const savedLine = await kept.locator(".display-sm").first().textContent();
@@ -257,6 +267,15 @@ try {
 
   // The transaction cost slider, which loads the entry price and nothing else.
   await kept.getByRole("button", { name: "Analyse", exact: true }).click();
+
+  // Saved work has to be one tap away on an app that now opens blank.
+  const listed = await kept.getByRole("button", { name: /UNGA Group Limited/ }).count();
+  check("the last memos are listed on a blank start", listed === 1, `${listed} entries`);
+  await kept.getByRole("button", { name: /UNGA Group Limited/ }).first().click();
+  const reopened = await kept.getByLabel("Company").inputValue();
+  check("reopening one restores the company", reopened === "UNGA Group Limited", reopened);
+
+  await kept.getByRole("button", { name: "Load worked example" }).click();
   const costBefore = (await kept.locator('xpath=//span[text()="Entry price, including costs"]/following-sibling::span').textContent()).trim();
 
   await kept.getByRole("button", { name: "Settings" }).first().click();
@@ -272,7 +291,10 @@ try {
   const costAfter = (await kept.locator('xpath=//span[text()="Entry price, including costs"]/following-sibling::span').textContent()).trim();
   check("moving it changes the price actually paid", costAfter !== costBefore, `${costBefore} then ${costAfter}`);
 
+  // The app opens blank now, so the example has to come back before there is a
+  // price on screen to read. The setting is what is being checked, not the form.
   await kept.reload({ waitUntil: "networkidle" });
+  await kept.getByRole("button", { name: "Load worked example" }).click();
   const costKept = (await kept.locator('xpath=//span[text()="Entry price, including costs"]/following-sibling::span').textContent()).trim();
   check("the setting survives a reload", costKept === costAfter, `${costAfter} then ${costKept}`);
 

@@ -1,0 +1,43 @@
+{
+  "_note": "Lines transcribed verbatim from the I&M Group PLC half-year statement to 30 June 2026, as the PDF reader returned them. A bank's statement, laid out company-then-group, eight period columns running oldest first, years repeating in the header, nil markers written as dashes, and no share count printed anywhere. Every one of those defeated the reader on first contact.",
+  "profile": "bank",
+  "expect_scale": 1000,
+  "expect_current_is_first": false,
+  "expect_columns": 8,
+  "pages": [
+    { "page": "page 1", "lines": [
+      "The Board of Directors of I&M Group PLC is pleased to announce unaudited results of the Group as at 30 June 2026",
+      "COMPANY   GROUP",
+      "UNAUDITED JUN 2025   AUDITED DEC 2025   UNAUDITED MAR 2026   UNAUDITED JUN 2026   UNAUDITED JUN 2025   AUDITED DEC 2025   UNAUDITED MAR 2026   UNAUDITED JUN 2026",
+      "(KSHS’000)   (KSHS’000)   (KSHS’000)   (KSHS’000)   (KSHS’000)   (KSHS’000)   (KSHS’000)   (KSHS’000)",
+      "A   ASSETS",
+      "1   Cash (both local and foreign)   693,679   1,512,650   5,331,971   1,501,770   7,502,210   9,813,534   9,868,382   8,245,654",
+      "4   Kenya Government and other securities held for dealing purposes   -   -   -   -   34,910,637   32,576,500   31,276,190   27,462,673",
+      "21   TOTALASSETS   44,525,295   45,228,193   49,375,379   45,702,665   588,921,384   668,884,028   742,507,376   746,307,916",
+      "34   TOTAL LIABILITIES   248,195   2,809,705   237,336   301,674   475,320,650   546,901,841   611,920,661   619,142,742",
+      "43   TOTAL SHAREHOLDERS’ EQUITY   44,277,100   42,418,488   49,138,043   45,400,991   106,520,709   115,160,998   123,297,425   119,412,481",
+      "5   TOTAL OPERATING INCOME   5,372,977   6,134,377   6,410,867   6,940,338   27,387,067   60,327,120   16,138,368   33,691,958",
+      "6.8   Total Other Operating Expenses   41,088   69,803   11,603   32,466   16,088,564   36,924,214   9,897,886   20,560,444",
+      "9   PROFIT AFTER EXCEPTIONAL ITEMS   5,331,889   6,064,574   6,399,264   6,907,872   11,705,628   24,179,959   6,421,846   13,463,314",
+      "10   Current tax   (22,874)   (15,159)   -   (3,937)   (3,393,575)   (3,469,032)   (1,883,681)   (3,903,833)",
+      "14   PROFIT AFTER TAX, EXCEPTIONAL ITEMS AND NON CONTROLLING INTEREST   5,309,015   6,049,415   6,399,264   6,903,935   7,733,575   18,781,449   4,721,318   9,305,096",
+      "18   EARNING PER SHARE - BASIC & DILUTED (KSHS)   3.05   3.48   3.68   3.97   4.44   10.79   2.71   5.35",
+      "19   DIVIDEND PER SHARE - (KSHS)   -   3.75   -   -   -   3.75   -   -",
+      "Cash and cash equivalents at end of period   52,545,634   89,023,494   88,511,960"
+    ] }
+  ],
+  "expect": {
+    "net_profit_from_operations": 9305096000,
+    "dividend_per_share_proposed": 3.75,
+    "cash_and_bank": 8245654000,
+    "cash_and_securities": 27462673000,
+    "current_assets": 746307916000,
+    "current_liabilities": 619142742000,
+    "non_current_assets": 0,
+    "non_current_liabilities": 0,
+    "total_income": 33691958000,
+    "total_expenses": 20560444000,
+    "income_tax_expense": -3903833000
+  },
+  "expect_derived_shares_near": 1739270000
+}
