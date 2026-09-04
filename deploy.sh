@@ -41,25 +41,43 @@ npm test
 echo "==> Building the wheel here"
 rm -rf dist/*.whl
 "$PYTHON" -m build --wheel
+WHEEL="$(ls -1t dist/*.whl | head -1)"
+WHEEL_NAME="$(basename "$WHEEL")"
+
+# Rehearse the VM's install, here, before anything ships. Three deploys in a row
+# failed on things this catches in eight seconds: a wheel filename pip refuses,
+# a dependency that will not resolve, an entry point that does not exist.
+echo "==> Rehearsing the remote install locally"
+REHEARSAL="$(mktemp -d)"
+trap 'rm -rf "$REHEARSAL"' EXIT
+python3 -m venv "$REHEARSAL/venv"
+"$REHEARSAL/venv/bin/pip" install --quiet --upgrade pip
+"$REHEARSAL/venv/bin/pip" install --quiet --only-binary :all: "$WHEEL"
+"$REHEARSAL/venv/bin/myanalyst-collect" --help >/dev/null
+"$REHEARSAL/venv/bin/myanalyst-collect" --db "$REHEARSAL/store" --health >/dev/null 2>&1 && {
+  echo "!! health passed on an empty store; the check is not checking" >&2; exit 1; }
+echo "    install, entry point and health check all behave"
 
 echo "==> Shipping release $RELEASE"
 # Everything under $APP_DIR belongs to the service user, and this script runs as
 # the login user. So the login user only ever writes to /tmp; sudo installs into
 # place with the right ownership, and the venv is built as the service user.
-scp -q dist/*.whl "$HOST:/tmp/myanalyst-release.whl"
+scp -q "$WHEEL" "$HOST:/tmp/$WHEEL_NAME"
 scp -q deploy/myanalyst-collect.service deploy/myanalyst-collect.timer "$HOST:/tmp/"
 
 ssh "$HOST" bash -euo pipefail <<REMOTE
   sudo install -d -o myanalyst -g myanalyst -m 755 "$APP_DIR/releases/$RELEASE"
+  # Keep the wheel's own filename: pip parses name, version and tags out of it
+  # and refuses anything else.
   sudo install -o myanalyst -g myanalyst -m 644 \
-    /tmp/myanalyst-release.whl "$APP_DIR/releases/$RELEASE/myanalyst.whl"
-  rm -f /tmp/myanalyst-release.whl
+    "/tmp/$WHEEL_NAME" "$APP_DIR/releases/$RELEASE/$WHEEL_NAME"
+  rm -f "/tmp/$WHEEL_NAME"
 
   cd "$APP_DIR/releases/$RELEASE"
   sudo -u myanalyst python3 -m venv .venv
   sudo -u myanalyst .venv/bin/pip install --quiet --upgrade pip
   # Wheels only. A source build on this box is what the ban on building here means.
-  sudo -u myanalyst .venv/bin/pip install --quiet --only-binary :all: ./myanalyst.whl
+  sudo -u myanalyst .venv/bin/pip install --quiet --only-binary :all: "./$WHEEL_NAME"
 
   sudo install -m 644 /tmp/myanalyst-collect.service /etc/systemd/system/
   sudo install -m 644 /tmp/myanalyst-collect.timer   /etc/systemd/system/
