@@ -141,6 +141,27 @@ try {
   check("the comparative period draws a trend", summary.includes("492,781,000"), summary.trim());
 
   check("no page errors during the read", problems.length === 0, problems.join(" | "));
+
+  // The private deal screen: two lenses that must be allowed to disagree.
+  await page.getByRole("button", { name: "Private", exact: true }).click();
+  const ic = (await page.locator(".display-sm").first().textContent()).trim();
+  check("the worked deal is the case the screen exists for", ic === "HOLD", ic);
+  const gap = await page.locator("text=/rests on the projection/").count();
+  check("the disagreement between the lenses is printed, not averaged", gap === 1, `${gap} statements`);
+
+  await page.getByLabel("Pre-money valuation").fill("5000000000");
+  const dear = (await page.locator(".display-sm").first().textContent()).trim();
+  check("a price nobody can justify turns the verdict", dear === "SELL", dear);
+
+  await page.getByLabel("Cash from operations").fill("");
+  const qoe = await page.locator("text=/Ask for it before anything else/").count();
+  check("a figure the deck omits is reported as a finding", qoe === 1, `${qoe} findings`);
+
+  const stillWide = await page.evaluate(() =>
+    document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  check("the private screen does not scroll sideways at 390px", !stillWide);
+  check("no page errors on the private screen", problems.length === 0, problems.join(" | "));
+
   await page.close();
 } finally {
   await browser.close();

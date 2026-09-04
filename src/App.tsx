@@ -1,13 +1,15 @@
 import { useState } from "react";
-import { BarChart3, BookOpen, LineChart, Settings as SettingsIcon, Star } from "lucide-react";
+import { BarChart3, BookOpen, Handshake, LineChart, Settings as SettingsIcon, Star } from "lucide-react";
 import { AppShell, type NavItem } from "./components/AppShell";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { useAppearance } from "./hooks/useAppearance";
 import { Analyse } from "./screens/Analyse";
+import { Private } from "./screens/Private";
 import { Placeholder } from "./screens/Placeholder";
 
 const ITEMS: NavItem[] = [
   { id: "analyse", label: "Analyse", icon: LineChart },
+  { id: "private", label: "Private", icon: Handshake },
   { id: "watchlist", label: "Watchlist", icon: Star },
   { id: "compare", label: "Compare", icon: BarChart3 },
   { id: "journal", label: "Journal", icon: BookOpen },
@@ -38,6 +40,7 @@ export default function App() {
         onOpenSettings={openSettings}
       >
         {current === "analyse" && <Analyse />}
+        {current === "private" && <Private />}
         {current === "watchlist" && (
           <Placeholder
             heading="Watchlist"
