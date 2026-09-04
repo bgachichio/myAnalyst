@@ -48,6 +48,29 @@ def report() -> None:
             print(f"  [{i}] {len(t)} rows | header: {head[:110]}")
         print()
 
+        print("-- rows of any Name/Value table (the market summary) --")
+        shown = False
+        for t in found:
+            head = [h.strip().lower() for h in (t[0] if t else [])]
+            if head and head[0].startswith("name") and any(h.startswith("value") for h in head):
+                for row in t[1:]:
+                    print(f"  {' | '.join(str(c)[:34] for c in row[:4])}")
+                shown = True
+        if not shown:
+            print("  none")
+        print()
+
+        print("-- WordPress AJAX actions referenced in the page --")
+        actions = sorted(set(re.findall(
+            r"""["']?action["']?\s*[:=]\s*["']([a-z0-9_\-]{4,60})["']""", html, re.I)))
+        for a in actions[:25]:
+            print(f"  {a}")
+        if not actions:
+            print("  none in the served HTML: the action name lives in a bundled script.")
+            print("  Find it with: Network tab, filter XHR, change the sector dropdown,")
+            print("  then read the request's Payload for 'action='.")
+        print()
+
         print("-- candidate data endpoints --")
         seen: set[str] = set()
         for match in ENDPOINT.finditer(html):

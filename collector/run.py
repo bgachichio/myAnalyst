@@ -33,6 +33,22 @@ def collect(store: PriceStore, trade_date: dt.date, *, window: int, out_dir: Pat
         store.log(trade_date, 0, "skipped", "Sunday")
         return 0
 
+    # The market summary is served in the page itself, so it survives an equity
+    # scrape that does not. Two sources, two failure modes, two outcomes.
+    indices = 0
+    try:
+        from .nse import PAGE, make_client, parse_market_summary
+        with make_client() as client:
+            page = client.get(PAGE)
+            page.raise_for_status()
+            observations = parse_market_summary(page.text, trade_date)
+        indices = store.record(observations)
+        if indices:
+            log.info("stored %d index levels: %s", indices,
+                     ", ".join(o.series_id for o in observations))
+    except Exception as exc:
+        log.error("market summary unavailable: %s: %s", type(exc).__name__, exc)
+
     try:
         quotes, trade_date, path = fetch_latest(trade_date)
     except SourceRefused as exc:
@@ -41,12 +57,15 @@ def collect(store: PriceStore, trade_date: dt.date, *, window: int, out_dir: Pat
         alert.send(f"myAnalyst: NSE source refused on {trade_date}. {exc}")
         return 2
     except ParseFailed as exc:
-        log.error("parse failed, nothing stored: %s", exc)
-        store.log(trade_date, 0, "parse-failed", str(exc))
+        log.error("equity prices not parsed, nothing stored for them: %s", exc)
+        store.log(trade_date, indices, "equities-parse-failed", str(exc))
         alert.send(
-            f"myAnalyst: NSE price list would not parse on {trade_date}, so nothing "
-            f"was stored. The page layout has probably changed. {exc}"
+            f"myAnalyst: NSE equity prices would not parse on {trade_date}. "
+            f"{indices} index levels were still stored. {exc}"
         )
+        store.prune(window_days=window)
+        if out_dir:
+            store.emit(out_dir)
         return 3
     except Exception as exc:                      # network, HTTP, anything else
         log.exception("collection failed")

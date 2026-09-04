@@ -87,7 +87,18 @@ def as_of_date(html: str) -> dt.date | None:
 
 
 def _normalise(value: object) -> str:
+    """For column headers, where digits are noise."""
     return re.sub(r"[^a-z ]", " ", str(value or "").lower()).strip()
+
+
+def _label(value: object) -> str:
+    """For row labels, where digits are the whole point.
+
+    "NSE 20 Share Index" and "NSE 25 Share Index" differ by one character. Strip
+    the digits and they are the same string, and the two indices become
+    interchangeable - silently, and for ever, in a store nobody re-reads.
+    """
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", " ", str(value or "").lower())).strip()
 
 
 def robots_allows(url: str, *, client: httpx.Client) -> bool:
@@ -188,6 +199,60 @@ def _columns(header: list[str]) -> dict[str, int]:
                 found.setdefault(key, position)
                 break
     return found
+
+
+#: The market summary table is served in the HTML, unlike the equity prices.
+#: Rows are matched on their label, tolerantly, because a label is a caption and
+#: captions get reworded. Anything unmatched is ignored rather than guessed at.
+#: Matched against _label, which keeps digits. Order matters: the most specific
+#: alias for each series first.
+INDEX_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("nse.nasi",    ("nasi", "all share", "allshare")),
+    ("nse.nse25",   ("nse 25", "nse25", "25 share")),
+    ("nse.banking", ("banking", "bank sector")),
+)
+
+#: A quoted index level. Anything outside this band is a turnover figure or a
+#: market capitalisation that happens to sit in the same column.
+INDEX_BAND = (1.0, 100_000.0)
+
+
+def parse_market_summary(html: str, obs_date: dt.date) -> list:
+    """Read index levels off the market summary table.
+
+    Returns Observations, not Quotes: an index is a series, not a security.
+    Imported lazily to keep this module free of a circular import.
+    """
+    from .store import Observation
+
+    found: dict[str, float] = {}
+    for table in html_tables(html):
+        if len(table) < 2:
+            continue
+        header = [_normalise(c) for c in table[0]]
+        if not (header and header[0].startswith("name") and any(h.startswith("value") for h in header)):
+            continue
+        value_at = next(i for i, h in enumerate(header) if h.startswith("value"))
+
+        for row in table[1:]:
+            if len(row) <= value_at:
+                continue
+            label = _label(row[0])
+            try:
+                value = float(str(row[value_at]).replace(",", "").strip())
+            except (TypeError, ValueError):
+                continue
+            if not INDEX_BAND[0] <= value <= INDEX_BAND[1]:
+                continue
+
+            for series_id, aliases in INDEX_ALIASES:
+                if not any(a in label for a in aliases):
+                    continue
+                found.setdefault(series_id, value)
+                break
+
+    return [Observation(series_id, obs_date, value, note="market summary")
+            for series_id, value in found.items()]
 
 
 def _from_mapping(row: dict, trade_date: dt.date, sector: str | None) -> Quote | None:

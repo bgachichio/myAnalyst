@@ -301,3 +301,60 @@ def test_an_unrecognisable_payload_yields_nothing_rather_than_guessing():
 
     for payload in ({"message": "unauthorised"}, [], "not json", 42, None):
         assert parse_json_feed(payload, DAY) == []
+
+
+# --- the market summary, which IS served in the HTML -----------------------
+# The equity prices are rendered in the browser, but the index table is not.
+# Structure taken from the live page on 4 September 2026: eighteen rows under
+# Name | Value | Change.
+
+SUMMARY_HTML = """
+<table>
+  <tr><th>Name</th><th>Value</th><th>Change</th></tr>
+  <tr><td>NASI</td><td>142.55</td><td>+0.41</td></tr>
+  <tr><td>NSE 20 Share Index</td><td>2,410.11</td><td>-3.20</td></tr>
+  <tr><td>NSE 25 Share Index</td><td>3,905.67</td><td>+12.04</td></tr>
+  <tr><td>NSE Banking Index</td><td>1,180.90</td><td>+2.10</td></tr>
+  <tr><td>Equity Turnover (KES)</td><td>412,905,118</td><td>-</td></tr>
+  <tr><td>Market Capitalisation (KES bn)</td><td>2,214,000,000,000</td><td>-</td></tr>
+</table>
+"""
+
+
+def test_reads_index_levels_from_the_market_summary():
+    from collector.nse import parse_market_summary
+
+    got = {o.series_id: o.value for o in parse_market_summary(SUMMARY_HTML, DAY)}
+    assert got["nse.nasi"] == 142.55
+    assert got["nse.nse25"] == 3905.67
+    assert got["nse.banking"] == 1180.90
+
+
+def test_turnover_and_market_cap_are_not_mistaken_for_index_levels():
+    from collector.nse import parse_market_summary
+
+    values = [o.value for o in parse_market_summary(SUMMARY_HTML, DAY)]
+    assert all(v < 100_000 for v in values), "a turnover figure is not an index level"
+
+
+def test_the_twenty_share_index_is_never_stored_as_the_twenty_five():
+    """They differ by one digit, and confusing them is silent and permanent."""
+    from collector.nse import parse_market_summary
+
+    got = {o.series_id: o.value for o in parse_market_summary(SUMMARY_HTML, DAY)}
+    assert got["nse.nse25"] == 3905.67, "must be the 25, not the 20"
+    assert 2410.11 not in got.values()
+
+
+def test_a_page_without_a_summary_table_yields_nothing():
+    from collector.nse import parse_market_summary
+
+    assert parse_market_summary("<table><tr><th>Cookie</th><th>Duration</th></tr></table>", DAY) == []
+
+
+def test_every_series_it_returns_is_registered():
+    from collector.nse import parse_market_summary
+    from collector.registry import BY_ID
+
+    for o in parse_market_summary(SUMMARY_HTML, DAY):
+        assert o.series_id in BY_ID
