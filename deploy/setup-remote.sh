@@ -17,6 +17,20 @@ OWNER="${OWNER:-myanalyst}"
 
 fail() { echo "!! $*" >&2; exit 1; }
 
+# Read the hash out of the env file without executing the file. A bcrypt hash
+# contains $2a$14$..., so sourcing it makes the shell expand $2 and $14 - which
+# under `set -u` aborts, and without it silently mangles the hash. Quotes are
+# stripped if present, so a file written by an older version still reads.
+read_hash() {
+  local line
+  line="$(grep -m1 '^MYANALYST_PASSWORD_HASH=' "$ETC_CADDY/env" 2>/dev/null)" || return 1
+  line="${line#MYANALYST_PASSWORD_HASH=}"
+  line="${line%\'}"; line="${line#\'}"
+  line="${line%\"}"; line="${line#\"}"
+  [ -n "$line" ] || return 1
+  printf '%s' "$line"
+}
+
 command -v caddy >/dev/null 2>&1 || fail "caddy is not installed on this machine."
 [ -f "$INCOMING" ] || fail "$INCOMING is missing; setup-site.sh should have copied it."
 
@@ -39,7 +53,7 @@ else
   echo "    site block appended to the Caddyfile"
 fi
 
-if [ -s "$ETC_CADDY/env" ] && grep -q '^MYANALYST_PASSWORD_HASH=\$2' "$ETC_CADDY/env"; then
+if [ -s "$ETC_CADDY/env" ] && [ "$(read_hash 2>/dev/null | cut -c1-2)" = '$2' ]; then
   echo "    the password is already set; delete $ETC_CADDY/env to change it"
 else
   echo
@@ -51,7 +65,9 @@ else
     \$2*) : ;;
     *) fail "caddy did not return a bcrypt hash. It returned: ${HASH:-<nothing>}" ;;
   esac
-  printf 'MYANALYST_PASSWORD_HASH=%s\n' "$HASH" > "$ETC_CADDY/env"
+  # Single-quoted: systemd strips one layer of quotes and never expands inside
+  # them, so the hash arrives intact whatever it contains.
+  printf "MYANALYST_PASSWORD_HASH='%s'\n" "$HASH" > "$ETC_CADDY/env"
   chmod 600 "$ETC_CADDY/env"
   chown root:root "$ETC_CADDY/env" 2>/dev/null || true
   echo "    hash written to $ETC_CADDY/env"
@@ -66,8 +82,15 @@ EnvironmentFile=/etc/caddy/env
 UNIT
 echo "    caddy reads $ETC_CADDY/env"
 
-caddy validate --config "$ETC_CADDY/Caddyfile" >/dev/null || fail "the Caddyfile does not validate."
-echo "    Caddyfile validates"
+# Caddy substitutes {$VAR} when it adapts the config, and the hash reaches the
+# service through the unit's EnvironmentFile - which a shell does not have. So
+# validating without loading that file first makes the password look empty and
+# reports the config invalid when it is not. Load it in a subshell, so the hash
+# never leaks into the rest of this script's environment.
+MYANALYST_PASSWORD_HASH="$(read_hash)" \
+  caddy validate --config "$ETC_CADDY/Caddyfile" >/dev/null ||
+  fail "the Caddyfile does not validate even with the hash substituted. The error above is the real one."
+echo "    Caddyfile validates, with the password hash substituted"
 
 $SYSTEMCTL daemon-reload
 # A restart, not a reload: a reload re-reads the Caddyfile but not the unit's

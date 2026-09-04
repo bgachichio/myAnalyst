@@ -81,7 +81,14 @@ ssh "$HOST" bash -euo pipefail <<'REMOTE'
   sudo mv "$APP_DIR.new" "$APP_DIR"
   rm -rf "$STAGE"
 
-  sudo caddy validate --config /etc/caddy/Caddyfile >/dev/null
+  # {$MYANALYST_PASSWORD_HASH} is substituted when Caddy adapts the config, and
+  # only systemd holds it, so validating without it reports a good config
+  # broken. Read the value; never source the file - a bcrypt hash contains
+  # $2a$14$ and the shell would expand it.
+  HASH_LINE="$(sudo grep -m1 '^MYANALYST_PASSWORD_HASH=' /etc/caddy/env)"
+  HASH="${HASH_LINE#MYANALYST_PASSWORD_HASH=}"
+  HASH="${HASH%\'}"; HASH="${HASH#\'}"
+  sudo MYANALYST_PASSWORD_HASH="$HASH" caddy validate --config /etc/caddy/Caddyfile >/dev/null
   sudo systemctl reload caddy
 REMOTE
 
