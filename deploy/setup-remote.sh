@@ -46,6 +46,27 @@ echo "    $SRV/app and $SRV/private exist"
 
 mkdir -p "$ETC_CADDY"
 touch "$ETC_CADDY/Caddyfile"
+
+# Back up before appending anything, once. This file is what rollback-site.sh
+# restores, and it is the difference between "myAnalyst did not deploy" and
+# "the web server is down and nobody remembers what was in the config".
+BACKUP="$ETC_CADDY/Caddyfile.pre-myanalyst"
+[ -f "$BACKUP" ] || { cp "$ETC_CADDY/Caddyfile" "$BACKUP"; echo "    backed up the Caddyfile to $BACKUP"; }
+
+# Caddy writes this site's access log to a file, and it creates the file but
+# not the directory. `caddy validate` does not look at the filesystem, so a
+# missing directory passes validation and then fails at startup - taking every
+# other site on this machine down with it.
+LOG_DIR="/var/log/caddy"
+CADDY_USER="$(systemctl show -p User --value caddy 2>/dev/null || true)"
+[ -n "$CADDY_USER" ] || CADDY_USER=caddy
+if id -u "$CADDY_USER" >/dev/null 2>&1; then
+  install -d -o "$CADDY_USER" -g "$CADDY_USER" -m 755 "$LOG_DIR"
+else
+  install -d -m 755 "$LOG_DIR"
+fi
+echo "    $LOG_DIR exists and belongs to $CADDY_USER"
+
 if grep -q "$SITE" "$ETC_CADDY/Caddyfile"; then
   echo "    the site block is already in the Caddyfile, leaving it alone"
 else
@@ -95,9 +116,25 @@ echo "    Caddyfile validates, with the password hash substituted"
 $SYSTEMCTL daemon-reload
 # A restart, not a reload: a reload re-reads the Caddyfile but not the unit's
 # EnvironmentFile, so the password hash would never reach the process.
-$SYSTEMCTL restart caddy
-sleep 1
-$SYSTEMCTL is-active --quiet caddy || fail "caddy did not come back up. journalctl -u caddy -n 30"
+if ! $SYSTEMCTL restart caddy || { sleep 1; ! $SYSTEMCTL is-active --quiet caddy; }; then
+  echo "!! caddy did not come back up. Here is why:" >&2
+  journalctl -u caddy -n 30 --no-pager >&2 || true
+  echo >&2
+  echo "!! Putting the Caddyfile back so the other sites on this machine keep serving." >&2
+  if [ -f "$BACKUP" ]; then
+    cp "$BACKUP" "$ETC_CADDY/Caddyfile"
+    rm -f "$UNIT_DIR/caddy.service.d/myanalyst-env.conf"
+    $SYSTEMCTL daemon-reload
+    $SYSTEMCTL restart caddy || true
+    sleep 1
+    if $SYSTEMCTL is-active --quiet caddy; then
+      echo "!! Caddy is back on the previous config. myAnalyst is not configured; nothing else changed." >&2
+    else
+      echo "!! Caddy is still down on the previous config, so this is not myAnalyst's doing." >&2
+    fi
+  fi
+  exit 1
+fi
 echo "    caddy restarted and running"
 
 rm -f "$INCOMING"
