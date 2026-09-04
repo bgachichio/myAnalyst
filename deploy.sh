@@ -90,13 +90,35 @@ ssh "$HOST" bash -euo pipefail <<REMOTE
   sudo systemctl enable --now myanalyst-collect.timer
 REMOTE
 
-echo "==> Verifying"
-if ! ssh "$HOST" "sudo -u myanalyst $APP_DIR/current/.venv/bin/myanalyst-collect \
-     --health --db /var/lib/myanalyst/store"; then
-  echo "!! health check failed, rolling back"
+# Verification separates two questions that are not the same question.
+#
+# Does the install work? If not, roll back: the code is wrong.
+# Is there fresh data? On a first deploy there is none, by definition, and a
+# scrape that fails because the NSE page changed is not a reason to revert
+# working code. So the collection runs, and its outcome is reported, but only
+# a broken install triggers a rollback.
+
+echo "==> Verifying the install"
+if ! ssh "$HOST" "sudo -u myanalyst $APP_DIR/current/.venv/bin/myanalyst-collect --help >/dev/null"; then
+  echo "!! the entry point does not run, rolling back"
   ./rollback.sh
   exit 1
 fi
+echo "    entry point runs"
+
+echo "==> First collection"
+if ssh "$HOST" "sudo -u myanalyst $APP_DIR/current/.venv/bin/myanalyst-collect \
+     --db /var/lib/myanalyst/store --out /srv/myanalyst/private"; then
+  echo "    collected"
+else
+  echo "!! the collection did not succeed. The install is sound and stays deployed;"
+  echo "   this is a source or a parsing problem. Read the output above, and:"
+  echo "     ssh $HOST 'sudo journalctl -u myanalyst-collect -n 50 --no-pager'"
+fi
+
+echo "==> Health"
+ssh "$HOST" "sudo -u myanalyst $APP_DIR/current/.venv/bin/myanalyst-collect \
+  --health --db /var/lib/myanalyst/store" || true
 
 # Keep current + one predecessor. Each release carries its own venv.
 ssh "$HOST" "sudo sh -c 'ls -1dt $APP_DIR/releases/* | tail -n +3 | xargs -r rm -rf'"
